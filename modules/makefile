@@ -1,0 +1,35 @@
+
+DIRS:=$(wildcard lab-*)
+
+build-modules:
+	make clean
+	make prepare
+	@for dir in $(DIRS); do \
+        echo "Building module: $$dir"; \
+        cd $$dir && make module.ko copy-to-fs && cd -; \
+        done
+	make rebuild
+
+clean:
+	@for dir in $(DIRS); do \
+        echo "Building module: $$dir"; \
+        cd $$dir && make clean && cd -; \
+        done
+
+buildpdfs: 
+	@for dir in $(DIRS); do \
+	sed -e '1s/^/```c\n/' -e '$$s/$$/\n```/' $$dir/module.c | pandoc --metadata-file ../scripts/meta.yaml -o $$dir/module.pdf -f markdown --pdf-engine=xelatex; \
+        done
+
+copypdfs:
+	@for dir in $(DIRS); do \
+	cp $$dir/module.pdf ../build/$$dir.pdf; \
+	   done
+
+prepare:
+	cp ./aux/module.lds.S-$(__BUILD_ARCH) /sources/linux/scripts/module.lds
+
+rebuild: 
+	/sources/mini-bootstrap.sh
+
+
