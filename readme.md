@@ -56,6 +56,21 @@ T=amd64 E=full make dev-vi F=scripts/init
 Replace `scripts/init` with a released lab source path when directed by its
 handout. Exit LazyVim with `:qa`.
 
+## Prepare the Lab 3 workspace
+
+Lab 3 provides a complete atomic-counter warm-up and an intentionally
+unsynchronized list scaffold. Keep the released scaffold unchanged and work on
+a copy:
+
+```sh
+rm -rf modules/lab-3-th-list-work
+cp -Rf modules/lab-3-th-rcu-scaffold modules/lab-3-th-list-work
+```
+
+The instructor will identify the exact synchronization changes at each
+checkpoint. `make dev-build` automatically discovers the working directory and
+installs `/modules/lab-3-th-list-work.ko` in the guest.
+
 ## Run the kernel
 
 ```sh

@@ -1,6 +1,7 @@
 T?=amd64
 E?=full
 JOBS?=4
+SMP?=1
 CONTAINER_BUILD_FLAGS?=
 CONTAINER_RUN_FLAGS?=
 
@@ -25,7 +26,7 @@ build-container:
 #   make dev-vi F=modules/<released-lab>/module.c # LazyVim inside
 #   make dev-build                                 # rebuild modules + initramfs
 #   make dev-ccdb                                  # gen compile_commands.json
-#   make dev-run                                   # qemu inside, TTY to host tmux
+#   make SMP=4 dev-run                             # qemu with four virtual CPUs
 #   make dev-dbg                                   # qemu paused, gdb on :1234
 #   make dev-sh                                    # bash inside
 #   make dev-down                                  # tear down
@@ -67,10 +68,10 @@ dev-ccdb:
 	@echo "(per-module dbs have directory=/sources/linux so -I./ resolves correctly)"
 
 dev-run:
-	docker exec -it -e TERM=$$TERM $(LKP) /repo/stage/start-qemu.sh --arch $(T)
+	docker exec -it -e TERM=$$TERM $(LKP) /repo/stage/start-qemu.sh --arch $(T) --smp $(SMP)
 
 dev-dbg:
-	docker exec -it -e TERM=$$TERM $(LKP) /repo/stage/start-qemu.sh --arch $(T) --dbg
+	docker exec -it -e TERM=$$TERM $(LKP) /repo/stage/start-qemu.sh --arch $(T) --smp $(SMP) --dbg
 
 
 ## Optional repository-local targets.
