@@ -2,8 +2,9 @@
 
 Reproducible Linux-kernel development environment for the Advanced Operating
 Systems course. Docker builds an amd64 Linux 5.16 kernel and a BusyBox
-initramfs; the host-driven Make targets rebuild released modules, open sources
-in LazyVim, and run the result in QEMU.
+initramfs. Two frontends share the same containerized compiler, module build,
+initramfs, and QEMU environment: a host-terminal workflow and a browser-based
+VS Code workflow.
 
 The public companion grows progressively. A checkout contains only the
 infrastructure and laboratory material already released for the course.
@@ -25,9 +26,23 @@ WSL2, and the experimental `aarch64` build are not supported.
 - `modules/`: build infrastructure and currently released lab sources;
 - `stage/`: QEMU launcher and locally generated kernel/initramfs artifacts.
 
-Generated images and module build products are intentionally not versioned.
+The public companion may ship prebuilt boot artifacts. Local module products,
+compile databases, and rebuilt images are intentionally not versioned.
 
-## Build the environment
+## Choose an interaction mode
+
+Two modes are currently available:
+
+1. **Terminal workflow — reference mode.** Interact with the development
+   container through the `make dev-*` commands and edit with LazyVim. This is
+   the established and recommended fallback.
+2. **Browser workflow — simpler, experimental mode.** Edit, build, run QEMU,
+   and debug from a VS Code interface in the browser. It reduces terminal
+   interaction, but it still requires broader testing on student machines. If
+   it causes problems, return to the terminal workflow; both modes operate on
+   the same repository files.
+
+## Terminal workflow: build the environment
 
 From a fresh clone:
 
@@ -44,23 +59,23 @@ stage/bzImage-amd64
 stage/initramfs-busybox-amd64.cpio.gz
 ```
 
-## Open a released source file
+### Open a released source file
 
 The full image includes LazyVim and clangd. `dev-build` creates a
 `compile_commands.json` in each released module directory.
 
 ```sh
-T=amd64 E=full make dev-vi F=scripts/init
+T=amd64 E=full make dev-vi F=modules/lab-1-intro-hello-module/module.c
 ```
 
 Replace `scripts/init` with a released lab source path when directed by its
 handout. Exit LazyVim with `:qa`.
 
-## Optional browser editor
+## Browser workflow (experimental)
 
-The optional browser workflow runs code-server, clangd, the build tools, and
-QEMU in a separate container. Build the shared base image, build the browser
-image, and start it:
+The browser workflow runs code-server, clangd, the build tools, and QEMU in a
+separate container. It is usually the simpler interface, but remains under
+validation. Build the shared base image, build the browser image, and start it:
 
 ```sh
 make build-container
@@ -89,8 +104,8 @@ To debug a loadable module, prepare its runtime symbols in the Debug Console
 before `insmod`:
 
 ```gdb
-aos-module-symbols /repo/modules/lab-3-th-atomics
-break counter_demo_init
+aos-module-symbols /repo/modules/lab-1-intro-hello-module
+break hello_init
 ```
 
 Continue the kernel and load the matching `.ko` in the guest. The helper
@@ -102,6 +117,21 @@ Stop and remove the container with:
 ```sh
 make vscode-down
 ```
+
+## Start a module from the public hello-world example
+
+`modules/lab-1-intro-hello-module` is always included as a minimal, complete
+kernel-module example. Keep it unchanged as a reference and copy it when you
+need a new module scaffold:
+
+```sh
+cp -Rf modules/lab-1-intro-hello-module modules/lab-my-module
+```
+
+Edit `modules/lab-my-module/module.c`. `make dev-build` in terminal mode, or
+`AOS: Build modules and initramfs` in browser mode, automatically discovers the
+new `lab-*` directory and installs `/modules/lab-my-module.ko` in the guest.
+
 
 ## Prepare the Lab 3 workspace
 
