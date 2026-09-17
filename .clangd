@@ -1,0 +1,22 @@
+CompileFlags:
+  Add:
+    - -Wno-unknown-warning-option
+    - -Wno-unused-but-set-variable
+  Remove:
+    - -mpreferred-stack-boundary=*
+    - -mno-fp-ret-in-387
+    - -mindirect-branch=*
+    - -mindirect-branch-register
+    - -mskip-rax-setup
+    - -mfunction-return=*
+    - -mrecord-mcount
+    - -fno-allow-store-data-races
+    - -fno-stack-clash-protection
+    - -fconserve-stack
+    - -fmacro-prefix-map=*
+    - -ftrivial-auto-var-init=*
+Diagnostics:
+  Suppress:
+    - unknown_warning_option
+Index:
+  Background: Build

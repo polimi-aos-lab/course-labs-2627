@@ -1,0 +1,12 @@
+{
+  "clangd.path": "/usr/local/bin/clangd",
+  "clangd.arguments": [
+    "--background-index",
+    "--clang-tidy",
+    "--header-insertion=iwyu",
+    "--completion-style=detailed",
+    "--query-driver=/usr/bin/gcc"
+  ],
+  "clangd.checkUpdates": false,
+  "terminal.integrated.defaultProfile.linux": "bash"
+}

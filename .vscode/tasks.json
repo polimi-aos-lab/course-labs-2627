@@ -1,0 +1,103 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "AOS: Build modules and initramfs",
+      "type": "shell",
+      "command": "/repo/scripts/dev-container.sh",
+      "args": ["build"],
+      "options": {
+        "cwd": "/repo",
+        "env": {
+          "__BUILD_ARCH": "amd64",
+          "BUILD_JOBS": "4"
+        }
+      },
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "focus": true,
+        "panel": "dedicated"
+      }
+    },
+    {
+      "label": "AOS: Refresh compile database",
+      "type": "shell",
+      "command": "/repo/scripts/dev-container.sh",
+      "args": ["ccdb"],
+      "options": {
+        "cwd": "/repo",
+        "env": {
+          "__BUILD_ARCH": "amd64"
+        }
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "focus": false,
+        "panel": "dedicated"
+      }
+    },
+    {
+      "label": "AOS: Run QEMU (1 vCPU)",
+      "type": "shell",
+      "command": "/repo/scripts/dev-container.sh",
+      "args": ["run"],
+      "options": {
+        "cwd": "/repo",
+        "env": {
+          "__BUILD_ARCH": "amd64",
+          "SMP": "1"
+        }
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "focus": true,
+        "panel": "dedicated"
+      }
+    },
+    {
+      "label": "AOS: Run QEMU (4 vCPUs)",
+      "type": "shell",
+      "command": "/repo/scripts/dev-container.sh",
+      "args": ["run"],
+      "options": {
+        "cwd": "/repo",
+        "env": {
+          "__BUILD_ARCH": "amd64",
+          "SMP": "4"
+        }
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "focus": true,
+        "panel": "dedicated"
+      }
+    },
+    {
+      "label": "AOS: Debug QEMU (4 vCPUs)",
+      "type": "shell",
+      "command": "/repo/scripts/dev-container.sh",
+      "args": ["debug"],
+      "options": {
+        "cwd": "/repo",
+        "env": {
+          "__BUILD_ARCH": "amd64",
+          "SMP": "4"
+        }
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "focus": true,
+        "panel": "dedicated"
+      }
+    }
+  ]
+}

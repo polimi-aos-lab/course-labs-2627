@@ -4,6 +4,13 @@ JOBS?=4
 SMP?=1
 CONTAINER_BUILD_FLAGS?=
 CONTAINER_RUN_FLAGS?=
+VSCODE_TAG?=lkp-amd64-full-vscode
+VSCODE_LKP?=lkp-vscode-dev-amd64
+VSCODE_PORT?=8080
+VSCODE_PASSWORD?=aos-linux-labs
+HOST_UID?=$(shell id -u)
+HOST_GID?=$(shell id -g)
+
 
 # image tag
 TAG?=lkp-$(T)-$(E)
@@ -73,6 +80,31 @@ dev-run:
 dev-dbg:
 	docker exec -it -e TERM=$$TERM $(LKP) /repo/stage/start-qemu.sh --arch $(T) --smp $(SMP) --dbg
 
+
+## Optional browser-based VS Code workflow. It uses a separate image and
+## container, leaving the teaching image/tag and dev-* workflow untouched.
+vscode-build-container:
+	docker build $(CONTAINER_BUILD_FLAGS) --platform linux/amd64 \
+	    -f Dockerfile.vscode . \
+	    -t $(VSCODE_TAG) \
+	    --build-arg USER_UID=$(HOST_UID) \
+	    --build-arg USER_GID=$(HOST_GID)
+
+vscode-up:
+	docker run -d --name $(VSCODE_LKP) --platform linux/amd64 \
+	    --privileged $(CONTAINER_RUN_FLAGS) \
+	    -e PASSWORD="$(VSCODE_PASSWORD)" \
+	    -p 127.0.0.1:$(VSCODE_PORT):8080 \
+	    -v "$(CURDIR):/repo" \
+	    $(VSCODE_TAG):latest
+	@echo "VS Code: http://127.0.0.1:$(VSCODE_PORT)"
+	@echo "Password: $(VSCODE_PASSWORD)"
+
+vscode-down:
+	-docker rm -f $(VSCODE_LKP)
+
+vscode-sh:
+	docker exec -it -e TERM=$$TERM $(VSCODE_LKP) /bin/bash
 
 ## Optional repository-local targets.
 -include local.mk

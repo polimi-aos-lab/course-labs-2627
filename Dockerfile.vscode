@@ -1,0 +1,61 @@
+FROM lkp-amd64-full:latest
+
+ARG USERNAME=vscode
+ARG USER_UID=1000
+ARG USER_GID=${USER_UID}
+ARG LLVM_VERSION=21
+ARG CODE_SERVER_VERSION=4.137.0
+ARG CODE_SERVER_SHA256=9303165b7fd43532091922f77e2f119ff2fa109c6b6f1c3c966fb02f3d6d9c8b
+ARG CLANGD_EXTENSION_VERSION=0.6.0
+ARG NATIVE_DEBUG_EXTENSION_VERSION=0.27.0
+
+USER root
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        gnupg \
+        sudo \
+        wget \
+    && wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key \
+        > /etc/apt/trusted.gpg.d/apt.llvm.org.asc \
+    && echo "deb https://apt.llvm.org/focal/ llvm-toolchain-focal-${LLVM_VERSION} main" \
+        > /etc/apt/sources.list.d/llvm.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+        "clangd-${LLVM_VERSION}" \
+        "clang-format-${LLVM_VERSION}" \
+    && ln -sf "/usr/bin/clangd-${LLVM_VERSION}" /usr/local/bin/clangd \
+    && ln -sf "/usr/bin/clang-format-${LLVM_VERSION}" /usr/local/bin/clang-format \
+    && if ! getent group "${USER_GID}" >/dev/null; then \
+        groupadd --gid "${USER_GID}" "${USERNAME}"; \
+    fi \
+    && useradd --uid "${USER_UID}" --gid "${USER_GID}" \
+        -m -s /bin/bash "${USERNAME}" \
+    && echo "${USERNAME} ALL=(root) NOPASSWD:ALL" \
+        > "/etc/sudoers.d/${USERNAME}" \
+    && chmod 0440 "/etc/sudoers.d/${USERNAME}" \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN wget -q \
+        "https://github.com/coder/code-server/releases/download/v${CODE_SERVER_VERSION}/code-server-${CODE_SERVER_VERSION}-linux-amd64.tar.gz" \
+        -O /tmp/code-server.tar.gz \
+    && echo "${CODE_SERVER_SHA256}  /tmp/code-server.tar.gz" \
+        | sha256sum -c - \
+    && mkdir -p /opt/code-server \
+    && tar -xzf /tmp/code-server.tar.gz \
+        --strip-components=1 -C /opt/code-server \
+    && ln -s /opt/code-server/bin/code-server /usr/local/bin/code-server \
+    && rm -f /tmp/code-server.tar.gz
+
+EXPOSE 8080
+
+WORKDIR /repo
+USER ${USERNAME}
+
+RUN code-server --install-extension \
+        "llvm-vs-code-extensions.vscode-clangd@${CLANGD_EXTENSION_VERSION}" \
+    && code-server --install-extension \
+        "webfreak.debug@${NATIVE_DEBUG_EXTENSION_VERSION}"
+
+CMD ["code-server", "--bind-addr", "0.0.0.0:8080", "--disable-telemetry", "--disable-update-check", "--disable-workspace-trust", "/repo"]

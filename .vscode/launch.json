@@ -1,0 +1,23 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "AOS: Attach to QEMU kernel",
+      "type": "gdb",
+      "request": "attach",
+      "executable": "/sources/linux/vmlinux",
+      "target": ":1234",
+      "remote": true,
+      "cwd": "/sources/linux",
+      "gdbpath": "/usr/bin/gdb",
+      "valuesFormatting": "parseText",
+      "stopAtConnect": false,
+      "autorun": [
+        "set pagination off",
+        "source /repo/scripts/gdb/aos-module-symbols.py",
+        "set confirm off",
+        "hbreak start_kernel"
+      ]
+    }
+  ]
+}

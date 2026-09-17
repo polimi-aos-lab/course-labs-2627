@@ -3,6 +3,8 @@
 *.mod.*
 *.ko
 .clangd
+!/.clangd
+.cache/
 *.o.d
 *.bkp
 *.o
