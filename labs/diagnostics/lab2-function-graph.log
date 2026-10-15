@@ -1,0 +1,56 @@
+=== FUNCTION GRAPH ===
+# tracer: function_graph
+#
+# CPU  DURATION                  FUNCTION CALLS
+# |     |   |                     |   |   |   |
+ 0)               |  do_sendfile() {
+ 0)               |    __fdget() {
+ 0) + 48.168 us   |      __fget_light();
+ 0)   7.807 us    |      irq_enter_rcu();
+ 0) ! 167.037 us  |      __sysvec_apic_timer_interrupt();
+ 0) + 19.868 us   |      irq_exit_rcu();
+ 0) ! 595.580 us  |    }
+ 0)               |    rw_verify_area() {
+ 0)   8.077 us    |      security_file_permission();
+ 0) + 13.147 us   |    }
+ 0)               |    __fdget() {
+ 0)   2.169 us    |      __fget_light();
+ 0)   4.999 us    |    }
+ 0) + 12.032 us   |    get_pipe_info();
+ 0)               |    rw_verify_area() {
+ 0)   4.577 us    |      security_file_permission();
+ 0)   7.482 us    |    }
+ 0)               |    do_splice_direct() {
+ 0)   4.962 us    |      rw_verify_area();
+ 0) ! 415.313 us  |      splice_direct_to_actor();
+ 0) ! 460.867 us  |    }
+ 0) # 1475.535 us |  }
+ 0)               |  do_sendfile() {
+ 0)               |    __fdget() {
+ 0)   2.349 us    |      __fget_light();
+ 0)   6.132 us    |    }
+ 0)               |    rw_verify_area() {
+ 0)   4.845 us    |      security_file_permission();
+ 0)   8.100 us    |    }
+ 0)               |    __fdget() {
+ 0)   1.511 us    |      __fget_light();
+ 0)   4.383 us    |    }
+ 0)   1.576 us    |    get_pipe_info();
+ 0)               |    rw_verify_area() {
+ 0)   3.924 us    |      security_file_permission();
+ 0)   6.643 us    |    }
+ 0)               |    do_splice_direct() {
+ 0)   4.405 us    |      rw_verify_area();
+ 0) + 32.975 us   |      splice_direct_to_actor();
+ 0) ! 226.888 us  |    }
+ 0) ! 266.015 us  |  }
+=== GRAPH BUFFER STATISTICS ===
+entries: 58
+overrun: 0
+commit overrun: 0
+bytes: 1980
+oldest event ts:    28.856799
+now ts:    28.938216
+dropped events: 0
+read events: 0
+=== GRAPH DONE ===

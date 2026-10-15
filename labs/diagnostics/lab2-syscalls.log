@@ -1,0 +1,47 @@
+=== SYSCALL EVENT FORMAT ===
+name: sys_enter_sendfile64
+ID: 653
+format:
+   field:unsigned short common_type;   offset:0;   size:2;   signed:0;
+   field:unsigned char common_flags;   offset:2;   size:1;   signed:0;
+   field:unsigned char common_preempt_count;   offset:3;   size:1;   signed:0;
+   field:int common_pid;   offset:4;   size:4;   signed:1;
+
+   field:int __syscall_nr;   offset:8;   size:4;   signed:1;
+   field:int out_fd;   offset:16;   size:8;   signed:0;
+   field:int in_fd;   offset:24;   size:8;   signed:0;
+   field:loff_t * offset;   offset:32;   size:8;   signed:0;
+   field:size_t count;   offset:40;   size:8;   signed:0;
+
+print fmt: "out_fd: 0x%08lx, in_fd: 0x%08lx, offset: 0x%08lx, count: 0x%08lx", ((unsigned long)(REC->out_fd)), ((unsigned long)(REC->in_fd)), ((unsigned long)(REC->offset)), ((unsigned long)(REC->count))
+=== WORKLOAD FILE SIZE ===
+584 /init
+=== SYSCALL TRACE ===
+# tracer: nop
+#
+# entries-in-buffer/entries-written: 6/6   #P:1
+#
+#                                _-----=> irqs-off
+#                               / _----=> need-resched
+#                              | / _---=> hardirq/softirq
+#                              || / _--=> preempt-depth
+#                              ||| / _-=> migrate-disable
+#                              |||| /     delay
+#           TASK-PID     CPU#  |||||  TIMESTAMP  FUNCTION
+#              | |         |   |||||     |         |
+             cat-81      [000] ...1.    18.756466: sys_openat(dfd: ffffff9c, filename: 7ffc168c6fa4, flags: 0, mode: 0)
+             cat-81      [000] ...1.    18.757142: sys_openat -> 0x3
+             cat-81      [000] ...1.    18.757785: sys_sendfile64(out_fd: 1, in_fd: 3, offset: 0, count: 1000000)
+             cat-81      [000] ...1.    18.758815: sys_sendfile64 -> 0x248
+             cat-81      [000] ...1.    18.758835: sys_sendfile64(out_fd: 1, in_fd: 3, offset: 0, count: 1000000)
+             cat-81      [000] ...1.    18.758847: sys_sendfile64 -> 0x0
+=== BUFFER STATISTICS ===
+entries: 6
+overrun: 0
+commit overrun: 0
+bytes: 248
+oldest event ts:    18.756466
+now ts:    18.786200
+dropped events: 0
+read events: 0
+=== SYSCALL DONE ===

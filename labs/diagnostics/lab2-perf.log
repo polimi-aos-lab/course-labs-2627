@@ -1,0 +1,59 @@
+=== PERF VERSION ===
+perf version 5.16.0-rc1
+=== PERF RECORD ===
+[ perf record: Woken up 1 times to write data ]
+[ perf record: Captured and wrote 0.002 MB /tmp/lab2-perf.data (6 samples) ]
+[   36.658195] perf (91) used greatest stack depth: 14176 bytes left
+=== PERF SCRIPT ===
+             cat    92 [000]    35.827700:     syscalls:sys_enter_openat: dfd: 0xffffff9c, filename: 0x7ffcb766cf66, flags: 0x00000000, mode: 0x00000000
+             cat    92 [000]    35.828645:      syscalls:sys_exit_openat: 0x3
+             cat    92 [000]    35.828679: syscalls:sys_enter_sendfile64: out_fd: 0x00000001, in_fd: 0x00000003, offset: 0x00000000, count: 0x01000000
+             cat    92 [000]    35.828978:  syscalls:sys_exit_sendfile64: 0x248
+             cat    92 [000]    35.829008: syscalls:sys_enter_sendfile64: out_fd: 0x00000001, in_fd: 0x00000003, offset: 0x00000000, count: 0x01000000
+             cat    92 [000]    35.829022:  syscalls:sys_exit_sendfile64: 0x0
+=== PERF REPORT ===
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 1  of event 'syscalls:sys_enter_openat'
+# Event count (approx.): 1
+#
+# Overhead       Samples  Command
+# ........  ............  .......
+#
+   100.00%             1  cat    
+
+
+# Samples: 1  of event 'syscalls:sys_exit_openat'
+# Event count (approx.): 1
+#
+# Overhead       Samples  Command
+# ........  ............  .......
+#
+   100.00%             1  cat    
+
+
+# Samples: 2  of event 'syscalls:sys_enter_sendfile64'
+# Event count (approx.): 2
+#
+# Overhead       Samples  Command
+# ........  ............  .......
+#
+   100.00%             2  cat    
+
+
+# Samples: 2  of event 'syscalls:sys_exit_sendfile64'
+# Event count (approx.): 2
+#
+# Overhead       Samples  Command
+# ........  ............  .......
+#
+   100.00%             2  cat    
+
+
+#
+# (Cannot load tips.txt file, please install perf!)
+#
+=== PERF DONE ===
