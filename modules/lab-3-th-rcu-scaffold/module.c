@@ -65,8 +65,8 @@ static struct writer_context writer_context;
 static unsigned long deadline;
 
 static bool node_is_consistent(const struct benchmark_node *node) {
-  u64 value = READ_ONCE(node->value);
-  u64 check = READ_ONCE(node->check);
+  u64 value = node->value;
+  u64 check = node->check;
 
   return check == ~value;
 }
@@ -83,7 +83,7 @@ static int reader_thread(void *argument) {
   struct reader_context *context = argument;
 
   wait_for_completion(&start_gate);
-  if (READ_ONCE(abort_start))
+  if (abort_start)
     return 0;
 
   while (time_before(jiffies, deadline)) {
@@ -104,17 +104,17 @@ static void update_list(void) {
     return;
 
   node = list_first_entry(&shared_list, struct benchmark_node, link);
-  value = READ_ONCE(node->value) + 1;
-  WRITE_ONCE(node->value, value);
+  value = node->value + 1;
+  node->value = value;
   udelay(1);
-  WRITE_ONCE(node->check, ~value);
+  node->check = ~value;
 }
 
 static int writer_thread(void *argument) {
   struct writer_context *context = argument;
 
   wait_for_completion(&start_gate);
-  if (READ_ONCE(abort_start))
+  if (abort_start)
     return 0;
 
   while (time_before(jiffies, deadline)) {
@@ -162,7 +162,7 @@ static int initialize_list(void) {
 static void stop_created_tasks(unsigned int reader_count) {
   unsigned int i;
 
-  WRITE_ONCE(abort_start, true);
+  abort_start = true;
   complete_all(&start_gate);
 
   for (i = 0; i < reader_count; i++)
@@ -216,7 +216,7 @@ static int __init list_demo_init(void) {
   if (error)
     return error;
 
-  WRITE_ONCE(abort_start, false);
+  abort_start = false;
   reader_contexts = kcalloc(readers, sizeof(*reader_contexts), GFP_KERNEL);
   if (!reader_contexts) {
     free_current_list();
