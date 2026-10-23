@@ -144,6 +144,10 @@ static void update_with_spinlock(void) {
   spin_unlock(&list_lock);
 }
 
+static void free_node_rcu(struct rcu_head *head) {
+  kfree(container_of(head, struct benchmark_node, rcu));
+}
+
 static bool update_with_rcu(void) {
   struct benchmark_node *old;
   struct benchmark_node *replacement;
@@ -161,7 +165,7 @@ static bool update_with_rcu(void) {
   udelay(1);
   list_replace_rcu(&old->link, &replacement->link);
 
-  kfree_rcu(old, rcu);
+  call_rcu(&old->rcu, free_node_rcu);
   return true;
 }
 

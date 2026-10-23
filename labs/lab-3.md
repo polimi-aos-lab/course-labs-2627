@@ -277,6 +277,8 @@ Starting from your spinlock version:
 
 - remove the spinlock completely and add a `struct rcu_head rcu;` member to
   `struct benchmark_node`;
+- write a callback `void free_node_rcu(struct rcu_head *head)` that frees the
+  node containing `head`;
 - `inspect_list`: traverse inside one read-side critical section with the RCU
   list iterator;
 - `update_list` becomes `bool update_list(void)`:
@@ -285,9 +287,10 @@ Starting from your spinlock version:
      `value = old value + 1`, `check = ~value`; keep `udelay(1)` before
      publishing;
   3. replace the old node with it in the list;
-  4. schedule the old node to be freed after a grace period; return `true`;
+  4. hand the old node to RCU with your callback; return `true`;
 - `writer_thread` increments `updates` only when `update_list` returns `true`;
-- `list_demo_init` calls `rcu_barrier()` after waiting for the writer;
+- `list_demo_init` calls `rcu_barrier()` after waiting for the writer, before
+  printing and returning;
 - change the label to `variant=rcu`.
 
 ## T2 · Useful APIs
@@ -300,15 +303,17 @@ Starting from your spinlock version:
 | first node | `list_first_entry(head, type, member)` |
 | allocate the replacement | `kmalloc(size, GFP_KERNEL)` |
 | publish a replacement | `list_replace_rcu(&old->link, &new->link)` |
-| free after a grace period | `kfree_rcu(old, rcu)` |
+| free after a grace period | `call_rcu(&old->rcu, free_node_rcu)` |
+| node from its `rcu_head` | `container_of(head, struct benchmark_node, rcu)` |
 | wait for the RCU callbacks queued so far | `rcu_barrier()` |
 
-`kfree_rcu` needs the name of the `struct rcu_head` member inside the node.
+`call_rcu` returns immediately; RCU runs the callback after a grace period, in
+softirq context: the callback must not sleep (`kfree` is fine).
 `kmalloc` with `GFP_KERNEL` may sleep: the writer is not inside a read-side
 critical section, so it may call it.
 
-`rcu_barrier()` returns after every RCU callback queued so far has run: call it
-before a module that defers work to RCU may be unloaded.
+The callback is **module code**. `rcu_barrier()` returns after every RCU callback
+queued so far has run: without it, a callback could run after `rmmod`.
 
 ## T2 · Inside `list_replace_rcu`
 
@@ -349,8 +354,8 @@ is **higher** than with one. Example: 895864 → 2538763.
 1. Why does the writer publish a new node instead of updating `value` and
    `check` of the old one?
 2. Why can the old node not be freed with `kfree` right after
-   `list_replace_rcu`? If the module freed it with `call_rcu` and a callback
-   function of its own, why would `rcu_barrier()` be mandatory before unloading?
+   `list_replace_rcu`? Why is `rcu_barrier()` mandatory before the module can
+   be unloaded?
 3. Why is no lock needed on the update side here? When would you need one?
 
 # Wrap-up
