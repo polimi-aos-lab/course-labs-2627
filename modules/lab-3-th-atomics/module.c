@@ -41,7 +41,7 @@ static int counter_thread(void *argument) {
 
   wait_for_completion(&start_gate);
 
-  if (READ_ONCE(abort_start))
+  if (abort_start)
     return 0;
 
   if (variant == 0) {
@@ -63,7 +63,7 @@ static int counter_thread(void *argument) {
 static void stop_workers(unsigned int count) {
   unsigned int i;
 
-  WRITE_ONCE(abort_start, true);
+  abort_start = true;
   complete_all(&start_gate);
 
   for (i = 0; i < count; i++)
@@ -82,7 +82,7 @@ static int __init counter_demo_init(void) {
     return -EINVAL;
 
   reinit_completion(&start_gate);
-  WRITE_ONCE(abort_start, false);
+  abort_start = false;
   shared_value = 0;
   atomic64_set(&atomic_value, 0);
 
@@ -110,7 +110,7 @@ static int __init counter_demo_init(void) {
     wait_for_completion(&workers[i].done);
   elapsed_ns = ktime_get_ns() - started_ns;
 
-  result = variant == 0 ? READ_ONCE(shared_value) : atomic64_read(&atomic_value);
+  result = variant == 0 ? shared_value : atomic64_read(&atomic_value);
   pr_info("counter_demo variant=%s cpus=%u iterations=%lu result=%lld expected=0 elapsed_ns=%llu\n",
           variant == 0 ? "racy" : "atomic", cpus, iterations, result,
           elapsed_ns);
