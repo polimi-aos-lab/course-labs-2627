@@ -5,26 +5,29 @@ course: Advanced Operating Systems
 institute: Politecnico di Milano
 ---
 
-# From a race to synchronization
+# Overview
 
-## What this lab compares
+## What you will build
 
-The lab uses two deliberately small experiments:
+A warm-up on a provided module, then one module of your own, rewritten twice.
 
-1. a scalar lost update, repaired with an atomic read-modify-write;
-2. one shared-list workload implemented as **unsafe**, **spinlock**, and **RCU** variants.
+- **Warm-up — atomics.** Run a racy counter and an atomic one; explain why
+  only one of them ends at zero.
+- **Checkpoint 0 — the unsafe list.** Copy the scaffold: a shared list, three
+  readers and one writer, with no synchronization. Read it and measure it.
+- **Task 1 — spinlock.** Make the same file correct with one spinlock.
+- **Task 2 — RCU.** Remove the lock: readers traverse without locking, the
+  writer copies, publishes and reclaims.
 
-The list experiment separates three questions:
+Each step ends with a build and a **checkpoint** in QEMU with four vCPUs.
+Answer the questions on each checkpoint slide before moving on.
 
-- **Correctness:** can a reader observe a partially updated invariant?
-- **Serialization:** must readers exclude one another and the writer?
-- **Lifetime:** when may an updater reclaim an object previously visible to a reader?
+The lab answers two questions: what does it take to keep a two-field invariant
+correct under concurrency, and what does it cost the readers?
 
-RCU means lockless read-side traversal here. It does **not** mean no synchronization: writers still serialize publication and defer reclamation.
+## Set up QEMU with four vCPUs
 
-## Use more than one CPU
-
-A one-vCPU guest can interleave threads but cannot execute them simultaneously.
+A one-vCPU guest can interleave threads but cannot run them at the same time.
 Use either frontend from Lab 1 and boot QEMU with four virtual CPUs.
 
 With the host-terminal frontend:
@@ -36,47 +39,44 @@ T=amd64 E=full make dev-build
 T=amd64 E=full SMP=4 make dev-run
 ```
 
-With the browser frontend, open the module source from the Explorer, use
-**Terminal → Run Build Task**, then run the `AOS: Run QEMU (4 vCPUs)` task.
-Editing, clangd feedback, the build log, and the QEMU guest console remain in
-the same browser window.
+With the browser frontend, use **Terminal → Run Build Task**, then run the
+`AOS: Run QEMU (4 vCPUs)` task.
 
-Inside the guest:
+Inside the guest, `grep -c '^processor' /proc/cpuinfo` must print 4.
+Exit QEMU with `Ctrl-]`, then `x`.
+
+## Set up the working copy
+
+The starter is `modules/lab-3-th-rcu-scaffold`. Do not edit it: copy it once
+and work only on the copy.
 
 ```sh
-grep -c '^processor' /proc/cpuinfo
+# Host
+cp -R modules/lab-3-th-rcu-scaffold modules/lab-3-th-list-work
 ```
 
-The expected count is 4. All reported timings are from instrumented QEMU and
-are useful only for relative comparisons in the same run.
+`make dev-build` finds the new directory and installs
+`/modules/lab-3-th-list-work.ko` in the guest. Edit
+`modules/lab-3-th-list-work/module.c` with
+`make dev-vi F=modules/lab-3-th-list-work/module.c` or from the browser
+Explorer. Rebuild after every change, then boot with `SMP=4` again.
 
-# Atomic read-modify-write
+All timings come from QEMU: compare them only within the same run.
 
-## The lost-update window
+# Warm-up — atomics
 
-The racy worker performs a load, a computation, and a store:
+## W · Task: run the counter demo
 
-```c
-long value = shared_value;
-cpu_relax();                  /* widen the window between load and store */
-shared_value = value + delta;
-```
+The provided [counter module](../modules/lab-3-th-atomics/module.c) starts two
+kthreads together. One adds `+1`, the other `-1`, the same number of times:
+the expected result is 0.
 
-Each load and each store is a single instruction, but the sequence is not: two CPUs can load the same old value and one overwrites the other's result. Marking the accesses with `READ_ONCE`/`WRITE_ONCE` or `volatile` would not help, because they constrain how the compiler emits each access, not which CPU owns the update.
+- `variant=0` (**racy**): each iteration loads `shared_value`, calls
+  `cpu_relax()` to widen the window, and stores `value + delta`. Loads and stores
+  use `READ_ONCE` / `WRITE_ONCE`.
+- `variant=1` (**atomic**): each iteration is one `atomic64_add`.
 
-## One atomic operation
-
-The fixed worker replaces the three-step sequence with one atomic read-modify-write:
-
-```c
-atomic64_add(delta, &atomic_value);
-```
-
-The two workers start together, execute the same number of `+1` and `-1` operations, and complete before module initialization returns. The expected final value is zero.
-
-[Atomic counter source](../modules/lab-3-th-atomics/module.c)
-
-## Run the two variants
+Read `counter_thread` and `counter_demo_init`, then run both variants:
 
 ```sh
 # Guest, four vCPUs
@@ -84,221 +84,280 @@ insmod /modules/lab-3-th-atomics.ko variant=0
 rmmod module
 insmod /modules/lab-3-th-atomics.ko variant=1
 rmmod module
+dmesg | grep counter_demo
 ```
 
-Observed in one verified run:
+## W · Checkpoint
+
+Expected: `variant=racy` has a non-zero `result` that changes from run to run;
+`variant=atomic` always has `result=0`. Example from one run:
 
 ```text
-counter_demo variant=racy   cpus=4 result=1078378 expected=0
-counter_demo variant=atomic cpus=4 result=0       expected=0
+counter_demo variant=racy   cpus=4 ... result=1078378 expected=0 ...
+counter_demo variant=atomic cpus=4 ... result=0 expected=0 ...
 ```
 
-The exact racy result varies and could occasionally be zero by coincidence. The atomic invariant is the meaningful result. Do not compare the elapsed times of these two implementations: `cpu_relax()` intentionally widens the race window.
+Do not compare `elapsed_ns`: `cpu_relax()` slows the racy loop on purpose.
 
-## What atomics do not solve
+**Questions.**
 
-An atomic operation protects one scalar update. It does not automatically protect:
+1. Every load and every store in the racy loop is a single instruction. How can
+   the result still be wrong?
+2. `READ_ONCE` / `WRITE_ONCE` do not fix the race. What do they do, and what
+   happens to the generated loop if you remove them?
+3. Each list node in the next part has two fields, `value` and `check`, that must
+   stay consistent. Why can an atomic operation not protect that?
 
-- a relationship among several fields;
-- a multi-step list modification;
-- the lifetime of an object reached through a pointer;
-- arbitrary accesses to unrelated memory.
+## W · Optional: look at the generated code
 
-The list experiment needs a stronger synchronization contract.
+After `make dev-build`, disassemble the two loops on the host:
 
-# One shared-list workload
+```sh
+# Host
+D='objdump -d --no-show-raw-insn /repo/modules/lab-3-th-atomics/module.o'
+F='/<counter_thread>:/,/^$/p'
+docker exec lkp-dev-amd64 sh -c "$D" | sed -n "$F" | grep -B3 -A5 pause
+docker exec lkp-dev-amd64 sh -c "$D" | sed -n "$F" | grep -B1 -A3 'lock add'
+```
 
-## Embedded kernel lists
+Browser frontend: run the same commands in the code-server terminal without
+`docker exec lkp-dev-amd64`.
 
-Linux embeds `struct list_head` inside each object:
+Find the load and the store of `shared_value` in the racy loop, and the single
+`lock add` of the atomic loop.
+
+# Checkpoint 0 — The unsafe list
+
+## C0 · The shared list
+
+Each node embeds its `struct list_head` and must satisfy the invariant
+`node->check == ~node->value`:
 
 ```c
 struct benchmark_node {
   u64 value;
   u64 check;
   struct list_head link;
-  struct rcu_head rcu;
 };
 ```
 
-![](Images/lab%203%202024-06-20%2011.55.17.excalidraw.png){.width=65% .center}
+![](Images/lab%203%202024-06-20%2011.55.17.excalidraw.png){.width=55% .center}
 
 %%[Edit in Excalidraw](Images/lab%203%202024-06-20%2011.55.17.excalidraw.md)%%
 
-> Each object owns the links that connect it to the shared list.
+## C0 · Read the scaffold
 
-The list contains 64 nodes by default. Every node must satisfy the compound invariant:
+Open `modules/lab-3-th-list-work/module.c` and find:
 
-```c
-node->check == ~node->value
-```
+| Function | What it does |
+|---|---|
+| `initialize_list` | builds `list_nodes` nodes with `value=i`, `check=~i` |
+| `inspect_list` | one traversal; counts nodes that break the invariant |
+| `reader_thread` | calls `inspect_list` until the deadline, counts `traversals` |
+| `update_list` | the writer's step: first node, `value`, `udelay(1)`, `check` |
+| `writer_thread` | calls `update_list`, counts `updates`, sleeps `writer_pause_us` |
+| `list_demo_init` | creates the threads, starts them, waits, prints one line |
+| `list_demo_exit` | frees the list |
 
-Readers traverse the entire list and count invariant violations. One writer repeatedly increments the first node. The [three variants](../modules/lab-3-th-rcu/module.c) keep the same observable contract but change synchronization.
+Two completion patterns order the threads: `start_gate` (one
+`complete_all` releases every thread at once) and each `context->done` (one
+`complete` per thread, one `wait_for_completion` in init). `insmod` returns only
+after every thread has finished.
 
-
-## Common benchmark controls
+## C0 · Parameters and output
 
 ```text
-variant=0|1|2          unsafe | spinlock | RCU
-readers=1..8           reader kthreads
+readers=1..8           reader kthreads (default 3)
 duration_ms=3000       measurement interval
 writer_pause_us=1000   pause between updates
 list_nodes=64          list length
 ```
 
-Reader counters are private to each thread and summed only after all workers finish. `printk` is outside the timed region. Module initialization waits for the bounded experiment, prints one result line, and returns with no worker left running.
-
-# Variant 0 — unsafe
-
-## A torn compound update
-
-The unsafe writer exposes two separate stores:
-
-```c
-value = node->value + 1;
-node->value = value;
-udelay(1);                    /* widen the observation window */
-node->check = ~value;
-```
-
-Readers use no lock. They can observe the new `value` with the old `check`: the two stores are separate, and nothing prevents a reader from running between them.
-
-This is safer and more repeatable than intentionally corrupting list links or freeing an object under a reader: the demonstration reports a violated invariant without crashing the teaching VM.
-
-## Observe the violations
-
-```sh
-insmod /modules/lab-3-th-rcu.ko \
-  variant=0 readers=3 duration_ms=1000 writer_pause_us=1000
-rmmod module
-```
-
-Verified example:
+`list_demo_init` prints one line, after all threads have exited:
 
 ```text
-variant=unsafe cpus=4 readers=3 duration_ms=1000
-traversals=2908844 updates=748 violations=25402
+list_demo variant=<label> cpus=<n> readers=<r> duration_ms=<d>
+          writer_pause_us=<p> traversals=<t> updates=<u> violations=<v>
 ```
 
-The counts vary, but `violations` should normally be non-zero on the four-vCPU setup. A zero count would not prove correctness; races are defined by missing synchronization, not by one observed failure.
+(one line in `dmesg`, wrapped here). The scaffold prints `variant=unsafe`.
+Your two versions must keep this format and change only the label.
 
-# Variant 1 — spinlock
-
-## Serialize readers and writer
-
-The lock-based reader holds the same spinlock for its entire traversal:
-
-```c
-spin_lock(&list_lock);
-list_for_each_entry(node, &shared_list, link)
-  check(node);
-spin_unlock(&list_lock);
-```
-
-The writer holds it across both field updates:
-
-```c
-spin_lock(&list_lock);
-node->value = value;
-udelay(1);
-node->check = ~value;
-spin_unlock(&list_lock);
-```
-
-The invariant is now protected, but every reader excludes every other reader and the writer. Do not sleep while holding a spinlock.
-
-## Correctness and scaling
-
-Run one reader, then three:
+## C0 · Checkpoint
 
 ```sh
-insmod /modules/lab-3-th-rcu.ko \
-  variant=1 readers=1 duration_ms=1000 writer_pause_us=1000
+# Guest, four vCPUs
+insmod /modules/lab-3-th-list-work.ko \
+  readers=3 duration_ms=1000 writer_pause_us=1000
 rmmod module
-insmod /modules/lab-3-th-rcu.ko \
-  variant=1 readers=3 duration_ms=1000 writer_pause_us=1000
-rmmod module
+dmesg | grep 'list_demo variant=unsafe' | tail -1
 ```
 
-Verified examples:
+Expected: `violations` greater than 0 (one run: `violations=25402`).
 
-```text
-spinlock readers=1 traversals=941737 updates=753 violations=0
-spinlock readers=3 traversals=285492 updates=671 violations=0
-```
+**Questions.**
 
-Adding readers reduced aggregate traversals because they contend for one lock. These are QEMU observations, not universal performance constants.
+1. Between which two statements of `update_list` is the first node
+   inconsistent? Why is a run with `violations=0` not a proof of correctness?
+2. Readers and writer update their counters with plain `++`, and init sums them
+   with plain reads. Why is that safe?
+3. Why are `reader_context` and `writer_context` marked
+   `____cacheline_aligned_in_smp`?
 
-# Variant 2 — RCU
+# Task 1 — Spinlock
 
-## Read-side critical section
+## T1 · Task: protect the list with one lock
 
-RCU readers take no lock:
+Modify `modules/lab-3-th-list-work/module.c`:
 
-```c
-rcu_read_lock();
-list_for_each_entry_rcu(node, &shared_list, link)
-  check(node);
-rcu_read_unlock();
-```
+- define one global spinlock for the list;
+- `inspect_list` holds it for the **whole** traversal;
+- `update_list` holds it across the emptiness check and both stores; keep
+  `udelay(1)` inside the critical section, so its cost stays visible;
+- `cond_resched()` in the reader loop and the writer's `usleep_range()` stay
+  **outside** the lock: code holding a spinlock must not sleep;
+- change the label in the final `pr_info` to `variant=spinlock`.
 
-The read-side critical section promises that an object reached through the RCU-protected list will not be reclaimed until the reader exits. Readers still need an immutable or otherwise safely synchronized view of each object.
+| Need | API |
+|---|---|
+| header | `<linux/spinlock.h>` |
+| static lock, initially unlocked | `DEFINE_SPINLOCK(name)` |
+| enter / leave the critical section | `spin_lock(&name)`, `spin_unlock(&name)` |
 
-## Copy, publish, reclaim
+No interrupt handler touches the list, so the plain `spin_lock` is enough.
 
-There is exactly one writer, so no lock is needed on the update side either: RCU only requires that updaters do not overlap, and here nothing else modifies the list while the benchmark runs. With several writers, a lock among writers would still be required.
-
-The writer prepares a complete replacement, then publishes it with one structural change:
-
-```c
-replacement = kmalloc(sizeof(*replacement), GFP_KERNEL);
-/* initialize replacement */
-
-old = list_first_entry(&shared_list, struct benchmark_node, link);
-list_replace_rcu(&old->link, &replacement->link);
-
-kfree_rcu(old, rcu);
-```
-
-`list_replace_rcu` is five pointer assignments (`include/linux/rculist.h`):
-
-```c
-new->next = old->next;
-new->prev = old->prev;
-rcu_assign_pointer(list_next_rcu(new->prev), new);   /* publication */
-new->next->prev = new;
-old->prev = LIST_POISON2;
-```
-
-The new node is wired to its neighbours while still private. `rcu_assign_pointer` stores `prev->next = new` with release semantics, so any reader that follows the new pointer also sees the initialized fields; `list_for_each_entry_rcu` pairs with it through `rcu_dereference`. Readers move only forward, so the back pointer is a plain store. The old node keeps a valid `next`, so a reader still standing on it continues normally; this is why it cannot be freed immediately.
-
-`kfree_rcu` delays reclamation until pre-existing readers have crossed a grace period. Module initialization calls `rcu_barrier()` after the benchmark so all queued reclamation callbacks finish before teardown proceeds.
-
-## Correctness and scaling
+## T1 · Checkpoint
 
 ```sh
-insmod /modules/lab-3-th-rcu.ko \
-  variant=2 readers=1 duration_ms=1000 writer_pause_us=1000
+# Guest
+insmod /modules/lab-3-th-list-work.ko \
+  readers=1 duration_ms=1000 writer_pause_us=1000
 rmmod module
-insmod /modules/lab-3-th-rcu.ko \
-  variant=2 readers=3 duration_ms=1000 writer_pause_us=1000
+insmod /modules/lab-3-th-list-work.ko \
+  readers=3 duration_ms=1000 writer_pause_us=1000
 rmmod module
+dmesg | grep 'list_demo variant=spinlock' | tail -2
 ```
 
-Verified examples:
+Expected: `violations=0` in both lines; total `traversals` with three readers
+is **lower** than with one. Example: 941737 → 285492.
 
-```text
-RCU readers=1 traversals=895864  updates=803 violations=0
-RCU readers=3 traversals=2538763 updates=797 violations=0
+**Questions.**
+
+1. Readers never modify the list. Why do three readers complete fewer
+   traversals in total than one?
+2. Name the calls of the scaffold that must stay outside the critical section,
+   and say why.
+3. What would a reader observe if the writer released the lock between the two
+   stores?
+
+# Task 2 — RCU
+
+## T2 · Idea: copy, publish, reclaim
+
+RCU readers take no lock. A read-side critical section
+(`rcu_read_lock` … `rcu_read_unlock`) does not exclude the writer: it only
+guarantees that a node the reader can reach is not **freed** before it leaves.
+
+So the writer never modifies a node that readers can see:
+
+1. **copy**: allocate a new node and fill it completely while it is private;
+2. **publish**: link it into the list in place of the old one, with one
+   pointer store that readers observe all at once;
+3. **reclaim**: free the old node only after a **grace period**, when every
+   reader that might still stand on it has left its critical section.
+
+RCU requires that updaters never overlap. Here there is exactly one writer
+thread, so the update side needs **no lock**. With several writers, a lock among
+writers would still be needed; readers would still take none.
+
+## T2 · Task: lockless readers, copy-publish-reclaim writer
+
+Starting from your spinlock version:
+
+- remove the spinlock completely and add a `struct rcu_head rcu;` member to
+  `struct benchmark_node`;
+- `inspect_list`: traverse inside one read-side critical section with the RCU
+  list iterator;
+- `update_list` becomes `bool update_list(void)`:
+  1. return `false` if the list is empty or the allocation fails;
+  2. allocate a replacement for the **first** node and set
+     `value = old value + 1`, `check = ~value`; keep `udelay(1)` before
+     publishing;
+  3. replace the old node with it in the list;
+  4. schedule the old node to be freed after a grace period; return `true`;
+- `writer_thread` increments `updates` only when `update_list` returns `true`;
+- `list_demo_init` calls `rcu_barrier()` after waiting for the writer;
+- change the label to `variant=rcu`.
+
+## T2 · Useful APIs
+
+| Need | API |
+|---|---|
+| headers | `<linux/rculist.h>`, `<linux/rcupdate.h>` |
+| read-side critical section | `rcu_read_lock()`, `rcu_read_unlock()` |
+| traverse an RCU-protected list | `list_for_each_entry_rcu(pos, head, member)` |
+| first node | `list_first_entry(head, type, member)` |
+| allocate the replacement | `kmalloc(size, GFP_KERNEL)` |
+| publish a replacement | `list_replace_rcu(&old->link, &new->link)` |
+| free after a grace period | `kfree_rcu(old, rcu)` |
+| wait for the RCU callbacks queued so far | `rcu_barrier()` |
+
+`kfree_rcu` needs the name of the `struct rcu_head` member inside the node.
+`kmalloc` with `GFP_KERNEL` may sleep: the writer is not inside a read-side
+critical section, so it may call it.
+
+`rcu_barrier()` returns after every RCU callback queued so far has run: call it
+before a module that defers work to RCU may be unloaded.
+
+## T2 · Inside `list_replace_rcu`
+
+`include/linux/rculist.h` replaces `old` with `new` in five pointer assignments:
+
+```c
+new->next = old->next;                               /* private      */
+new->prev = old->prev;                               /* private      */
+rcu_assign_pointer(list_next_rcu(new->prev), new);   /* publication  */
+new->next->prev = new;                               /* plain store  */
+old->prev = LIST_POISON2;                            /* catch misuse */
 ```
 
-With three readers, aggregate RCU traversal throughput scaled while the spinlock variant serialized. The writer kept its update rate too, because readers no longer hold it back; each update still pays for an allocation and a deferred free.
+- `rcu_assign_pointer` stores `prev->next = new` with release semantics: a reader
+  that follows the new pointer also sees `value`, `check` and `next`.
+  `list_for_each_entry_rcu` reads each `next` with `rcu_dereference`.
+- RCU readers only move forward, so `prev` needs no ordering.
+- `old->next` stays valid: a reader standing on `old` continues normally.
 
-# Interpret the comparison
+## T2 · Checkpoint
 
-## Same machine, relative result
+```sh
+# Guest
+insmod /modules/lab-3-th-list-work.ko \
+  readers=1 duration_ms=1000 writer_pause_us=1000
+rmmod module
+insmod /modules/lab-3-th-list-work.ko \
+  readers=3 duration_ms=1000 writer_pause_us=1000
+rmmod module
+dmesg | grep 'list_demo variant=rcu' | tail -2
+```
 
-One verified one-second run on four QEMU vCPUs produced:
+Expected: `violations=0` in both lines; total `traversals` with three readers
+is **higher** than with one. Example: 895864 → 2538763.
+
+**Questions.**
+
+1. Why does the writer publish a new node instead of updating `value` and
+   `check` of the old one?
+2. Why can the old node not be freed with `kfree` right after
+   `list_replace_rcu`? If the module freed it with `call_rcu` and a callback
+   function of its own, why would `rcu_barrier()` be mandatory before unloading?
+3. Why is no lock needed on the update side here? When would you need one?
+
+# Wrap-up
+
+## Compare the variants
+
+Example from one verified one-second run on four QEMU vCPUs:
 
 | Variant | Readers | Traversals | Updates | Violations |
 |---|---:|---:|---:|---:|
@@ -308,61 +367,23 @@ One verified one-second run on four QEMU vCPUs produced:
 | RCU | 1 | 895,864 | 803 | 0 |
 | RCU | 3 | 2,538,763 | 797 | 0 |
 
-Interpret the direction, not the exact numbers:
+Your numbers will differ; the trends should not. Unsafe is fast but wrong;
+spinlock is correct but readers serialize; RCU is correct and reads scale,
+paying with an allocation and a deferred free per update.
 
-- unsafe is fast but incorrect;
-- spinlock is correct and simple, but readers serialize;
-- RCU is correct and lets read-side throughput scale;
-- RCU moves complexity and cost to the update and reclamation side.
+Optional: rerun the RCU version with `writer_pause_us=0` (a write-heavy
+workload) and compare `updates` and `traversals` with your previous run.
 
-## Optional write-heavy run
+## Done when
 
-Set `writer_pause_us=0` to remove the deliberate read-mostly pause:
+- the unsafe scaffold reports `violations` greater than 0;
+- `variant=spinlock` reports `violations=0` with one and three readers, and
+  fewer total traversals with three;
+- `variant=rcu` reports `violations=0` with one and three readers, and more
+  total traversals with three; the module contains no lock;
+- `modules/lab-3-th-rcu-scaffold` is unchanged;
+- after the last `rmmod module`, `cat /proc/modules` lists no `module`, and
+  `dmesg | grep -E 'BUG:|WARNING:|Oops:'` prints nothing.
 
-```sh
-insmod /modules/lab-3-th-rcu.ko \
-  variant=1 readers=3 duration_ms=1000 writer_pause_us=0
-rmmod module
-insmod /modules/lab-3-th-rcu.ko \
-  variant=2 readers=3 duration_ms=1000 writer_pause_us=0
-rmmod module
-```
-
-This changes the workload rather than producing a general ranking. RCU is designed for read-mostly structures; the relative result depends on list size, update method, allocation, grace periods, vCPU scheduling and host load.
-
-# Safe lifecycle
-
-## Threads belong to the module
-
-Both modules follow the same lifecycle:
-
-1. validate parameters and allocate state;
-2. create every kthread and bind it to an available vCPU;
-3. release a common start gate;
-4. wait for every worker completion;
-5. report after all workers have exited;
-6. reclaim pending RCU callbacks before returning;
-7. free the current list on module removal.
-
-A module must never return from cleanup while one of its kthreads can still execute module code. Creation failures must unwind already-created tasks and allocations.
-
-## End the lab
-
-Check that no module remains loaded:
-
-```sh
-cat /proc/modules
-```
-
-Exit QEMU with `Ctrl-]`, then `x`. Stop the container for the frontend you
-used:
-
-```sh
-# Host-terminal frontend
-T=amd64 E=full make dev-down
-
-# Browser frontend
-make vscode-down
-```
-
-The lesson is not “RCU is always faster.” It is: choose synchronization from the invariant, access pattern and lifetime contract, then measure the actual workload.
+Exit QEMU, then stop the container: `T=amd64 E=full make dev-down`
+(host terminal) or `make vscode-down` (browser).

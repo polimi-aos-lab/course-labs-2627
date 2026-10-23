@@ -5,109 +5,181 @@ course: Advanced Operating Systems
 institute: Politecnico di Milano
 ---
 
-# Introduction to the environment
-## This repo organization
+# Overview
 
-A few words on the organisation of this repo. Where we get the kernel from, what is a [initramfs](https://en.wikipedia.org/wiki/Initial_ramdisk) (hint: initramfs is used as the first root filesystem that your machine has access to) and what you can produce with it. Our machine will not need another disk; this initial file system is everything we need to play with the kernel.
+## What you will build
 
-> Initramfs is setup using [busybox: The Swiss Army Knife of Embedded Linux](https://busybox.net/about.html)
+One kernel module of your own, a reading of a real kernel failure, and three
+GDB sessions on the running kernel.
 
-## Building the development environment
+- **Part A — your first module.** Build, load and remove the hello starter in a
+  working copy, then make its parameter validated and writable at runtime.
+- **Part B — kernel failures.** Read an oops report and locate the failing
+  instruction, the task and the call path.
+- **Part C — the kernel under GDB.** Stop the `init_module` system call that
+  loads your module, follow it into your init function and back, then stop a
+  timer callback before it runs.
 
-Build the supported amd64 full image once from the repository root:
+Each part ends with a **checkpoint**. Answer the questions on each checkpoint
+slide before moving on.
+
+The lab answers two questions. Loading a module creates no process: so
+**who runs its code** (A, C)? And what does the kernel tell you
+**when its own code fails** (B, C)?
+
+## Set up the environment
+
+Build the image once (long: it downloads and compiles the kernel):
 
 ```bash
 T=amd64 E=full make build-container
 ```
 
-Then choose either frontend. Both edit the same bind-mounted repository and use
-the same kernel, module build, initramfs, and QEMU.
+Then use **one** frontend. Both edit the same repository and use the same
+kernel, module build, initramfs and QEMU.
 
-### Host terminal and LazyVim
-
-```bash
-T=amd64 E=full make dev-up
-T=amd64 E=full make dev-build
-T=amd64 E=full make dev-vi F=modules/lab-1-intro-hello-module/module.c
-```
-
-The full image provides LazyVim and clangd. Exit LazyVim with `:qa`.
-
-### Browser editor
+**Host terminal and LazyVim** (exit LazyVim with `:qa`):
 
 ```bash
-make vscode-build-container
-make vscode-up
-```
-
-Open `http://127.0.0.1:8080`, enter the password `aos-linux-labs`, and open
-`modules/lab-1-intro-hello-module/module.c` from the Explorer. VS Code edits the
-host repository at `/repo`; clangd diagnostics and navigation run inside the
-container. If port 8080 is already in use, start it with
-`make VSCODE_PORT=8081 vscode-up` and open that port instead.
-
-## Running and rebuilding
-
-With the host-terminal frontend, rebuild and start the generated kernel and
-initramfs with:
-
-```bash
-T=amd64 E=full make dev-build
+T=amd64 E=full make dev-up      # once
+T=amd64 E=full make dev-build   # after every change
 T=amd64 E=full make dev-run
+T=amd64 E=full make dev-vi F=modules/lab-1-work/module.c
 ```
 
-With the browser frontend, use **Terminal → Run Build Task** for
-`AOS: Build modules and initramfs`. Then use **Terminal → Run Task** and select
-`AOS: Run QEMU (1 vCPU)`. The task terminal is the QEMU guest console. Whenever
-you change a module, run the build task again before booting.
+**Browser editor:** `make vscode-build-container`, then `make vscode-up`; open
+`http://127.0.0.1:8080` with password `aos-linux-labs` (port busy:
+`make VSCODE_PORT=8081 vscode-up`). Build with **Terminal → Run Build Task**
+(`AOS: Build modules and initramfs`); boot with
+**Terminal → Run Task → `AOS: Run QEMU (1 vCPU)`**.
 
-# Modules
-## Modules and module lifecycle
+## Set up the working module
 
-- Modules are a **flexible way of handling** the operating system **image** at runtime.
-- Instead of rebooting with a different operating system image, modules allow easy extension of the operating systems\' capabilities as required.
-- It is the most convenient way with which we are going to play with the kernel.
-
-See [lab-1-intro-hello-module](../modules/lab-1-intro-hello-module)
-
-## Module parameters
-
-- Parameters can be declared and initialised in code
-
-```c
-static int num = 5;
-/* S_IRUG0: everyone can read the sysfs entry */
-module_param(num, int, S_IRUG0);
-```
-
-- And defined at module instantiation time
+`modules/lab-1-intro-hello-module` is the published starter: keep it unchanged
+and work on a copy.
 
 ```bash
-insmod yourmodule.ko num=10
+# Host
+rm -rf modules/lab-1-work
+cp -Rf modules/lab-1-intro-hello-module modules/lab-1-work
 ```
 
-## Who executes the module?
+Every `modules/lab-*` directory is built by `make dev-build` (or the browser
+build task) and installed in the guest as `/modules/<directory>.ko`: yours is
+`/modules/lab-1-work.ko`. Only `module.c` is compiled, so the module's internal
+name is `module`: that is the name `rmmod` and `/sys/module` use.
 
-**Loading a module does not create a process.** Who calls its initialization and cleanup functions?
+The guest has no disk: its whole root filesystem is an **initramfs**
+([busybox](https://busybox.net/about.html)) generated by the build. A running
+guest never sees a rebuilt module: exit QEMU with `Ctrl-]`, then `x`, rebuild,
+boot again.
 
-The hello module logs the current task in both functions:
+# Part A — A module and its parameters
 
-```c
-#include <linux/sched.h>
+## A1 · Task: build, load and remove the starter
 
-/* Inside hello_init(): */
-pr_info("hello_init: comm=%s pid=%d\n",
-        current->comm, task_pid_nr(current));
+Read [the starter](../modules/lab-1-intro-hello-module/module.c) (now also in
+`modules/lab-1-work/module.c`) and find:
 
-/* Inside hello_cleanup(): */
-pr_info("hello_cleanup: comm=%s pid=%d\n",
-        current->comm, task_pid_nr(current));
+- the function that runs at `insmod` and the one that runs at `rmmod`, and how
+  they are registered;
+- the parameter `num`: its default value and its permissions;
+- the three lines printed by init and the two printed by exit.
+
+Build, boot and load the module with `num=7`. **Before running**, predict
+which process name init and exit will print: loading a module creates no
+process.
+
+## A1 · Useful APIs
+
+| Need | API |
+|---|---|
+| run code at load / unload | `module_init(fn)`, `module_exit(fn)`; init returns 0 or `-errno` |
+| a load-time parameter | `module_param(name, type, perm)`; set with `insmod file.ko name=value` |
+| log a line (read with `dmesg`) | `pr_info(fmt, ...)`; also `pr_err`, `pr_warn`, … |
+| the task executing this code | `current`: name `current->comm`, PID `task_pid_nr(current)` |
+| print a pointer | `%p` hashed; `%px` raw address (only in a test VM); `%pK` per `kptr_restrict` |
+
+A parameter with non-zero permissions appears as
+`/sys/module/<module>/parameters/<name>`. Format specifiers:
+[printk formats](https://www.kernel.org/doc/html/latest/core-api/printk-formats.html).
+
+## A1 · Checkpoint
+
+```sh
+# Guest
+insmod /modules/lab-1-work.ko num=7
+echo status=$?                           # status=0
+cat /sys/module/module/parameters/num    # 7
+rmmod module
+dmesg | grep hello_
 ```
 
-`current` identifies the task executing this kernel code; `comm` is its name.
+Example from one run (PIDs and addresses vary):
 
-# Module debugging
-## Kernel failures > an error return is not an oops
+```text
+hello_init: comm=insmod pid=76
+Address of hello_init = (____ptrval____) (ffffffffc0005000)!
+hello_cleanup: comm=rmmod pid=81
+```
+
+**Questions.**
+
+1. Which task ran `hello_init`, and which ran `hello_cleanup`? Did any task
+   run the module's code between the two?
+2. Why does `%p` print `(____ptrval____)` and not the address?
+
+## A2 · Task: validate and update the parameter
+
+Change `modules/lab-1-work/module.c`:
+
+1. Make `num` readable by everyone and writable by root: permissions `0644`.
+2. At the start of the init function, before any other line: if `num` is
+   negative, log `hello_init: invalid num=<num>` and return `-EINVAL`.
+3. In the exit function, also log `hello_cleanup: num=<num>`, with the value
+   `num` has when the module is removed.
+
+Keep everything else from A1. Rebuild, boot a new guest and run:
+
+```sh
+# Guest
+insmod /modules/lab-1-work.ko num=-1
+echo status=$?
+cat /proc/modules
+insmod /modules/lab-1-work.ko num=7
+echo 9 > /sys/module/module/parameters/num
+rmmod module
+dmesg | grep -E 'hello_(init|cleanup):'
+```
+
+## A2 · Checkpoint
+
+Expected: the first `insmod` fails with
+
+```text
+insmod: can't insert '/modules/lab-1-work.ko': invalid parameter
+```
+
+then `status=1` and an empty `/proc/modules`. The log (PIDs vary):
+
+```text
+hello_init: invalid num=-1
+hello_init: comm=insmod pid=77
+hello_cleanup: comm=rmmod pid=79
+hello_cleanup: num=9
+```
+
+When init returns a negative error, the load fails: the module is freed and
+its exit function never runs.
+
+**Questions.**
+
+1. Was the failed load a kernel failure? Which code decided what `insmod` printed?
+2. `num` became 9 without any call into your module. Which task wrote it?
+
+# Part B — When kernel code fails
+
+## B · An error return is not an oops
 
 **An expected failure is handled through normal control flow. A programming defect can instead make kernel execution invalid.**
 
@@ -126,38 +198,15 @@ pr_info("hello_cleanup: comm=%s pid=%d\n",
 ```
 {.width=70% .center}
 
-A failed allocation can lead to the second case if the caller dereferences the null result instead of checking it.
+A failed allocation leads to the second case if the caller dereferences the
+null result instead of checking it. Not every invalid access is detected
+immediately: a write to mapped memory may silently corrupt another object.
 
-Not every invalid access is detected immediately: a write to mapped memory may silently corrupt another object.
+## B · Oops and panic
 
-## Kernel failures > what is an oops?
-
-**An oops is Linux's handling of a serious kernel execution error when it cannot recover the failing execution path.** It produces a diagnostic report and abandons that path.
-
-```tikz
-\begin{document}
-\begin{tikzpicture}[>=stealth, every node/.style={font=\sffamily\small},
-  box/.style={draw,align=center,minimum width=3cm,minimum height=1cm}]
-\node[box] (access) at (0,0) {Kernel code\\accesses \texttt{NULL}};
-\node[box] (exception) at (4.5,0) {CPU exception:\\invalid access};
-\node[box] (oops) at (9,0) {Oops:\\diagnostic report};
-\draw[->,thick] (access) -- (exception);
-\draw[->,thick] (exception) -- node[above,align=center,font=\scriptsize]
-  {no recovery} (oops);
-\end{tikzpicture}
-\end{document}
-```
-{.width=85% .center}
-
-- The **CPU exception** is the hardware event; the **oops** is the kernel's error handling and report.
-- The report identifies the failing instruction, relevant registers and call trace.
-- An oops does **not** by itself mean that the whole system has stopped or rebooted.
-
-Some kernel exceptions have recovery paths. For example, supported user-memory access helpers can handle invalid user addresses; those faults need not cause an oops.
-
-## Kernel failures > when does an oops lead to panic?
-
-**Panic means that the kernel stops normal system-wide execution.** Whether an oops leads to panic depends on context and policy.
+An **oops** is Linux's handling of a kernel execution error it cannot recover
+from: it prints a report and abandons the failing path. A **panic** stops the
+whole system.
 
 ```tikz
 \begin{document}
@@ -173,15 +222,16 @@ Some kernel exceptions have recovery paths. For example, supported user-memory a
 \end{tikzpicture}
 \end{document}
 ```
-{.width=60% .center}
+{.width=55% .center}
 
-If the error occurs while servicing an interrupt, the kernel cannot simply terminate a calling user task to contain it.
+- The CPU exception is the hardware event; the oops is the kernel's report.
+- In an interrupt there is no calling task to terminate. Continuing after an
+  oops does not guarantee consistent state.
+- Some faults have recovery paths (e.g. user-memory copy helpers) and cause no oops.
 
-Continuing after an oops does not guarantee consistent state. After a panic, configuration determines crash dumping, halting or rebooting. Code can also call `panic()` directly, without a preceding oops.
+## B1 · Task: read an oops report
 
-## Kernel failures > reading the oops report
-
-Real QEMU capture: Linux `5.16.0-rc1`, temporary module writing through a null pointer.
+Learn where each part of a report is from this annotated excerpt, then answer the checkpoint from the full log.
 
 ```tikz
 \begin{document}
@@ -225,147 +275,67 @@ Real QEMU capture: Linux `5.16.0-rc1`, temporary module writing through a null p
 ```
 {.width=75% .center}
 
-Excerpt: timestamps removed; lines selected and wrapped. `[...]` omits frames. [Full report](diagnostics/oops-demo.log).
+## B1 · Checkpoint
 
-## Poorman's printk
+[diagnostics/oops-demo.log](diagnostics/oops-demo.log) is the full report of a
+module `oops_demo` whose init writes through a null pointer (Linux
+`5.16.0-rc1`, this QEMU). There are no guest commands: answer from the
+**full** log, not only from the excerpt.
 
-Printing from kernel to the log buffer is done today with the `pr_*()` family of functions:
+**Questions.**
 
-- `pr_emerg(), pr_alert(), pr_crit(), pr_err(), pr_warn(), pr_notice(), pr_info(), pr_cont()`,
+1. Which instruction failed? Give the function, what `+0x5/0x1000` means,
+   and the kind of access (`#PF` lines and `error_code`).
+2. Inside the call trace there is a second register dump with
+   `RIP: 0033:` and `ORIG_RAX: 00000000000000af`. Whose registers are these,
+   and which system call do they identify?
+3. The log ends with `Killed`. What happened to `insmod`, and did the guest
+   keep running? Would the outcome be the same if the faulting write ran in a
+   timer callback?
 
-For example: `pr_info("Booting CPU %d\n", cpu);`
+# Part C — The kernel under GDB
 
-For pointers:
+## C · Where GDB attaches
 
-- `%p`: Display the hashed value of pointer by default.
-- `%px`: Always display the address of a pointer (use carefully on non-sensitive addresses).
-- `%pK`: Display hashed pointer value, zeros or the pointer address depending on kptr_restrict sysctl value
+**KGDB:** a debugger stub inside the kernel talks to GDB over a serial line.
 
-See for example
-- [How to get printk format specifiers right — The Linux Kernel documentation](https://www.kernel.org/doc/html/latest/core-api/printk-formats.html)
-- [bootlin.com/doc/training/debugging/debugging-slides.pdf](https://bootlin.com/doc/training/debugging/debugging-slides.pdf)
-
-## The hard truth about kernel debugging
-
-- Usually no magic formula, requires **creative detective work**
-- This lab is not about this creative part (this requires time) but the tools that are available to you
-- In general many ways in which you can arrive to the same result
-
-# Introduction to GDB
-## Introduction
-
-Why use live GDB
-
-- Understanding the code flow
-- Dumping data structures and assembly
-- Debugging hangs
-
-Why not use live gdb
-
-- Issue is not reproducible
-- Don't know what to look for
-
-## Including debug info in your kernel
-
-You must use `CONFIG_DEBUG_INFO` in your `.config` file otherwise..
-
-```
-(gdb) c
-Continuing.
-^C
-Thread 1 received signal SIGINT, Interrupt.
-Oxffffffff81e8ccbf in default_idle ()
-(gdb) bt
-#0 ﻿﻿﻿Oxffffffff81e8ccbf in default_idle () <----- No line info!
-#1 ﻿﻿﻿Oxffffffff81e8cf8c in default_idle_call()
-#2 Oxffffffff810da469 in do_idle ()
-```
-
-## Disabling KSLR
-
-You must boot with `nokaslr` your kernel otherwise you'll get random and unintelligible stack frame info
-
-```
-(gdb) c
-Continuing.
-^C
-Thread 1 received signal SIGINT, Interrupt.
-Oxffffffff81e8ccbf in ??
-(gdb) bt
-#0 ﻿﻿﻿Oxffffffff81e8ccbf in ?? <----- No symbol info!
-#1 ﻿﻿﻿Oxffffffff81e8cf8c in ??
-#2 Oxffffffff810da469 in ??
-```
-
-## External hardware > KGDB
-
-The execution of the kernel can be fully controlled by gdb from another machine, connected through a serial line (enabled by `CONFIG_KGDB_SERIAL_CONSOLE`).
-![](Images/lab%201%202024-05-14%2015.13.44.excalidraw.png){.width=80% .center}
+![](Images/lab%201%202024-05-14%2015.13.44.excalidraw.png){.width=55% .center}
 
 %%[Edit in Excalidraw](Images/lab%201%202024-05-14%2015.13.44.excalidraw.md)%%
 
-> GDB connected over a serial port to a live Linux machine.
+**JTAG:** a hardware probe controls the CPU; the kernel needs no support.
 
-It can do almost everything, including inserting breakpoints in interrupt handlers and provides GDB python scripts to ease debugging.
-
-##  External hardware > JTAG
-
-![](Images/lab%201%202024-05-14%2015.26.15.excalidraw.png){.width=75% .center}
+![](Images/lab%201%202024-05-14%2015.26.15.excalidraw.png){.width=55% .center}
 
 %%[Edit in Excalidraw](Images/lab%201%202024-05-14%2015.26.15.excalidraw.md)%%
 
-> GDB connected through JTAG to a live Linux machine; KGDB is not required.
+**QEMU (this lab):** the emulator's gdbstub plays the role of the probe.
 
-JTAG is allows to debug a system with almost no functioning software. You use JTAG on system bring up if you are not sure that you even reach a point where kgdb could work.
-
-
-
-## Internal emulation > QEMU
-
-![](Images/lab%201%202024-05-15%2017.20.09.excalidraw.png){.width=85% .center}
+![](Images/lab%201%202024-05-15%2017.20.09.excalidraw.png){.width=55% .center}
 
 %%[Edit in Excalidraw](Images/lab%201%202024-05-15%2017.20.09.excalidraw.md)%%
 
-> GDB connected directly to QEMU; no intermediary is required.
+## C · Useful GDB commands
 
-With QEMU, we could emulate access to our linux system as it was over a jtag, even if kgdb is not enabled. GDB commands are the same though.
+| Command | Effect |
+|---|---|
+| `target remote 127.0.0.1:1234` | attach to QEMU's gdbstub; the whole VM stops |
+| `hbreak <function>`, `hbreak *<address>` | hardware breakpoint; `*` = exact entry address |
+| `continue`, `finish` | resume; run until the selected function returns |
+| `bt`, `frame N` | backtrace; select frame `N` |
+| `p`, `p/x`, `p/d`, `x/s`, `x/4bx`, `x/i` | value; memory as string, bytes, instruction |
+| `lx-ps`, `lx-lsmod`, `p $lx_current()` | kernel helpers: tasks, modules, current task |
+| `lx-symbols <module dir>` | load the symbols of a loaded module |
+| `detach`, `quit` | let the VM run again; leave GDB |
 
-# Mini tutorial on GDB for the kernel
+The kernel is built with `CONFIG_DEBUG_INFO` (source lines and types) and
+booted with `nokaslr` (addresses match `vmlinux`). Without the first, GDB
+shows no line numbers; without the second, frames show as `??`.
 
-## Preliminaries > GDB commands > most used
+## C1 · Task: stop the system call that loads your module
 
-```bash
-break <sym> # inserts a break point
-info break  # shows breakpoints
-delete <num># deletes <num> breakpoint
-continue    # continues from a breakpoint to the next
-step        # enters the subroutine and breaks
-next        # does not enter subroutines and breaks
-bt          # prints stack backtrace
-```
-
-## Preliminaries > GDB commands > Linux specific scripts
-
-```bash
-lx-lsmod # list modules
-lx-ps    # list processes
-apropos lx
-
-p $lx_current()
-p *(struct task_struct *) <address of process from lx-ps>
-p $container_of(listheadp, "struct <type x>", "name of the list head in <type ⨉")
-p $lx_task_by_pid(<PID>)
-set $t = $lx_task_by_pid(<PID>)
-p $t -> __state # print state
-
-```
-
-## Anatomy of a syscall > attach to the running guest
-
-Already at the amd64 QEMU shell; the hello module is built but **not loaded**.
-
-This walkthrough uses terminal GDB. With the browser frontend, use the graphical
-kernel and module debugging procedure near the end of this handout instead.
+Boot a fresh guest with your A2 module, **not loaded**. Use terminal GDB (the
+browser alternative is at the end of Part C).
 
 ::::div{.columns}
 :::div{.column width="50%"}
@@ -404,20 +374,20 @@ On x86-64, **175** is `init_module`.
 **Now run in the QEMU guest**
 
 ```sh
-insmod /modules/lab-1-intro-hello-module.ko num=7
+insmod /modules/lab-1-work.ko num=7
 ```
 
 GDB stops before the syscall executes.
 :::
 ::::
 
-## Anatomy of a syscall > caller and arguments
+## C1 · Task: inspect the caller and its arguments
 
-At `__x64_sys_init_module`, `regs` points to the **user registers saved at syscall entry**, not GDB's current CPU registers.
-
-::::div{.columns}
-:::div{.column width="50%"}
-**GDB at the first breakpoint**
+At `__x64_sys_init_module`, print the current task, the syscall number, the
+three arguments of `init_module(image, length, parameters)` and the first four
+bytes of the image. `regs` points to the
+**user registers saved at syscall entry**: `di`, `si`, `dx` hold the three
+arguments.
 
 ```gdb
 p $lx_current()->pid
@@ -429,38 +399,33 @@ x/s regs->dx
 x/4bx regs->di
 ```
 
-The syscall arguments are:
+## C1 · Checkpoint
 
-```c
-init_module(image, length, parameters)
-```
-
-`di`: image pointer; `si`: length in bytes; `dx`: parameter-string pointer.
-:::
-:::div{.column width="50%"}
-**Observed in the remote run**
+Example from one run (PID, addresses and length vary):
 
 ```text
-pid:       80
-comm:      "insmod..."
-orig_ax:   175
-di:        0x7fb6044fd010
-si:        228288
-string:    " \"num=7\""
-ELF bytes: 0x7f 0x45 0x4c 0x46
+$2 = 75
+$3 = "insmod\000/0\000\000\000\000\000\000"
+$4 = 175
+$5 = 0x7f451fb89010
+$6 = 228608
+0x10c0c90:      " \"num=7\""
+0x7f451fb89010: 0x7f    0x45    0x4c    0x46
 ```
 
-PID, addresses and image length vary. The string includes BusyBox's added spaces and quotes.
+BusyBox adds the spaces and quotes around `num=7`.
 
-The four bytes identify an **ELF image**. The task remains `insmod` while executing kernel code.
-:::
-::::
+**Questions.**
 
-## Anatomy of a syscall > initialization and return
+1. Which task executes this kernel code? Compare with the `comm` printed by
+   `hello_init` in A1.
+2. What do the four bytes tell you about what `insmod` hands to the kernel?
+3. Why read `regs->di` rather than GDB's `$rdi` at this point?
 
-::::div{.columns}
-:::div{.column width="50%"}
-**GDB**
+## C2 · Task: from the syscall to your init and back
+
+Continue to `do_init_module`, check which module is being initialized, and
+return to the syscall entry code one function at a time:
 
 ```gdb
 continue
@@ -470,16 +435,18 @@ finish
 finish
 finish
 p/d $rax
-detach
-quit
 ```
 
-At `do_init_module`, `mod->name` is `"module"`.
+On this build the three `finish` commands return from `do_init_module`,
+`load_module` and `__do_sys_init_module`; check the frame GDB prints after each.
 
-On this build, the three `finish` commands return from `do_init_module`, `load_module`, then `__do_sys_init_module`.
-:::
-:::div{.column width="50%"}
-**Observed call path** — selected frames:
+**Then** `continue` in GDB. In the guest run `echo status=$?`,
+`cat /proc/modules` and `rmmod module`; load the module again with `num=-1`
+and repeat the same GDB steps. Finally `detach`, `quit`, and `echo status=$?`.
+
+## C2 · Checkpoint
+
+**Expected** at `do_init_module`: `mod->name` is `"module"`. Selected frames:
 
 ```text
 do_init_module
@@ -490,25 +457,27 @@ do_syscall_64
 entry_SYSCALL_64
 ```
 
-Each `finish` returned **0**; `$rax` was **0** at the syscall return to `do_syscall_x64`.
+With `num=7`, each `finish` returns **0** and `$rax` is **0**: status `0`,
+module `Live`. With `num=-1`, each returns **-22**: status `1`, no module.
 
-**Guest after detach:** status `0`, module `Live`.
+**Questions.**
 
-```sh
-echo $?
-cat /proc/modules
-rmmod module
-```
-:::
-::::
+1. Which function, called by `do_init_module`, finally calls `hello_init`?
+   (Compare with the call trace in B1.)
+2. What is `-22`, and how does it become `invalid parameter` in the guest?
+3. Why does the guest console not respond while GDB is stopped?
 
-## Timer callback > stop before it runs
+## C3 · Task: stop a timer callback before it runs
 
-After the syscall exercise, use a **fresh guest and a fresh GDB session**. The timer module must already be built into the initramfs.
+The demo module [lab-1-list-manip](../modules/lab-1-list-manip/module.c) builds
+a three-node list and arms an `hrtimer`: 3 s after loading, then every second,
+`my_timer_handler` adds a node and removes the tail. Its traversal contains an
+**intentional bug**: stop at the callback's first instruction and never let it
+run. Use a **fresh guest and a fresh GDB session**.
 
 ::::div{.columns}
 :::div{.column width="50%"}
-**Reuse the monitor and GDB startup commands** from the syscall slide. In GDB:
+**Reuse the monitor and GDB startup commands** from C1. In GDB:
 
 ```gdb
 set pagination off
@@ -522,11 +491,9 @@ continue
 ```sh
 insmod /modules/lab-1-list-manip.ko
 ```
-
-GDB stops before module initialization. The timer has not been armed yet.
 :::
 :::div{.column width="50%"}
-**GDB at `do_init_module`**
+**GDB at `do_init_module`**, before the timer is armed:
 
 ```gdb
 p mod->name
@@ -537,34 +504,33 @@ hbreak *my_timer_handler
 continue
 ```
 
-Observed: module `"module"`, task `"insmod"`.
-
-The `*` selects the function's **entry address**, before its body executes. Install this breakpoint before continuing; the timer's three-second delay is not setup time.
+Install the breakpoint **before** continuing; the three-second delay is not
+setup time.
 :::
 ::::
 
-## Timer callback > who is executing now?
+## C3 · Checkpoint
 
 ::::div{.columns}
 :::div{.column width="50%"}
-**At the first callback entry**
+**At the callback entry**
 
 ```gdb
 bt
 p $lx_current()->pid
 p $lx_current()->comm
 x/i $pc
-p timer
 p/x timer->function
 ```
 
-Observed PID **0**, name **`swapper/0`**.
-`timer->function` matched the breakpoint address.
+Example from one run: PID **0**, name **`swapper/0`**; `timer->function`
+equals the breakpoint address.
 
-`current` identifies the interrupted task. It does not mean that task requested the callback; a different run may interrupt another task.
+**End here:** exit QEMU (`Ctrl-]`, `x`), then `quit` GDB. Do not `continue`,
+`detach` or `rmmod`.
 :::
 :::div{.column width="50%"}
-**Observed stack** — selected frames:
+**Selected frames**
 
 ```text
 my_timer_handler
@@ -575,28 +541,31 @@ __sysvec_apic_timer_interrupt
 sysvec_apic_timer_interrupt
 ```
 
-Unlike the syscall path, this callback is entered from a timer interrupt. GDB stopped unwinding at the interrupt-stack boundary in this run.
+**Questions.**
 
-**End the demonstration here.** Exit QEMU with `Ctrl-]`, then `x`; then `quit` GDB.
-Do not `continue`, `detach` or `rmmod` in this demonstration: the callback still contains the intentional list-traversal fault.
+1. Which task is `current` now? Did it ask for the callback? Compare with C1.
+2. Why `hbreak *my_timer_handler`, installed at `do_init_module`?
+3. Why does the callback allocate with `GFP_ATOMIC`, and init with `GFP_KERNEL`?
 :::
 ::::
 
-## Optional > debugging the list fault
+## C4 · Optional task: find the list bug after the panic
 
-The separate list-debugging exercise starts from a fresh VM. It is not needed to demonstrate timer execution context.
-
-![](Images/lab-1%202024-09-25%2021.35.19.excalidraw.png){.width=85% .center}
+![](Images/lab-1%202024-09-25%2021.35.19.excalidraw.png){.width=75% .center}
 
 %%[Edit in Excalidraw](Images/lab-1%202024-09-25%2021.35.19.excalidraw.md)%%
 
-After removing the tail, `cur` stays unchanged and `cur->next` is null. The next loop iteration evaluates `cur->next->next`.
+In a fresh guest, **without** breakpoints, load `lab-1-list-manip.ko` and let
+the timer run. The guest stops with
+`Kernel panic - not syncing: Fatal exception in interrupt`. Then attach GDB and
+find the faulting instruction, the register that held `cur`, and the values of
+`cur->data` and `cur->next`.
 
-The callback allocates with `GFP_ATOMIC` and skips traversal if allocation fails; initialization uses `GFP_KERNEL` and frees any partial list on failure. Cleanup cancels the timer before freeing the list. The traversal fault remains intentional: do not treat this as a correct list implementation.
+## C4 · Post-fault GDB session
 
-## Optional > post-fault analysis with GDB
-
-After the panic, GDB attaches to QEMU at the panic path, not at the faulting instruction. The original `struct pt_regs` is still available through the `regs` parameter of the `page_fault_oops` frame:
+GDB attaches at the panic path, not at the faulting instruction. The original
+registers are still available through the `regs` parameter of the
+`page_fault_oops` frame:
 
 ```gdb
 target remote 127.0.0.1:1234
@@ -613,34 +582,70 @@ p/x head                   # pointer to the first node
 p *head                    # first node
 ```
 
-In the source, `head` is the global `struct list_node *head`; `lx-symbols` gives GDB its name and type. In the verified run, saved `RDI` was zero. On x86, `CR2` contains the virtual address that caused the latest page fault: the `next` field is at offset 8, so `0x8(%rdi)` with `RDI=0` explains `CR2=8`. `CR2` is not the page-fault error code. The disassembly showed that saved `RBX` held `cur`; inspecting it recovered `cur->next == NULL`. Confirm the compiler's register assignment from the disassembly before interpreting a saved register.
+`lx-symbols` gives GDB the name and type of the global `head`. Confirm from
+the disassembly which register holds `cur` before trusting a saved register.
+Exit QEMU from the monitor; do not `continue`.
 
-## Optional > graphical kernel and module debug in the browser
+## C4 · Checkpoint
 
-With the browser frontend running, first execute the
-`AOS: Build modules and initramfs` task. Then:
+Excerpt from one run (condensed, comments added):
 
-1. run the `AOS: Debug QEMU (4 vCPUs)` task;
+```text
+mov    0x8(%rbx),%rdi
+cmpq   $0x0,0x8(%rdi)        # faulting instruction
+$1 = 0x0                     # saved RDI
+$2 = {data = 1, next = 0x0}  # cur, from saved RBX
+```
+
+The oops report shows `CR2: 0000000000000008`. On x86, `CR2` holds the
+virtual address that caused the latest page fault.
+
+**Questions.**
+
+1. Why does this null dereference end in a panic, while the one in B1 only
+   killed `insmod`?
+2. Why is the faulting address `8` and not `0`?
+3. In words, what is wrong with the traversal, and how would you fix it?
+
+## Browser frontend: graphical debugging
+
+With the browser frontend, first run the `AOS: Build modules and initramfs`
+task. Then:
+
+1. run the `AOS: Debug QEMU (1 vCPU)` task;
 2. open **Run and Debug**, select `AOS: Attach to QEMU kernel`, and press `F5`;
-3. inspect the stopped `start_kernel` frame, then press `F5` again to continue
-   booting.
+3. GDB stops in `start_kernel`; press `F5` again to continue booting.
 
-To stop in the hello module initialization, enter these commands in the Debug
-Console before loading the module:
+The GDB commands of C1–C4 work in the **Debug Console**. To stop in your
+module's initialization, enter before loading it:
 
 ```gdb
-aos-module-symbols /repo/modules/lab-1-intro-hello-module
+aos-module-symbols /repo/modules/lab-1-work
 break hello_init
 ```
 
-Continue the kernel, then run
-`insmod /modules/lab-1-intro-hello-module.ko` in the QEMU guest. The helper
-resolves the module's runtime section addresses before `hello_init` executes.
-GDB, QEMU, and the source tree all remain inside the browser container; no
-separate `gdbfrontend` process or host GDB port is required.
+Continue the kernel, then run `insmod /modules/lab-1-work.ko` in the guest.
+The helper loads the module's symbols at their runtime addresses before
+`hello_init` executes. GDB, QEMU and the sources all stay inside the browser
+container.
 
+# Wrap-up
 
-## Linkography
+## Done when
+
+- `modules/lab-1-intro-hello-module` is unchanged; your module is in
+  `modules/lab-1-work`;
+- `insmod` with `num=-1` fails with status 1 and leaves no module; with `num=7`
+  it loads, and after writing 9 to the parameter `rmmod module` logs
+  `hello_cleanup: num=9`;
+- you can explain each part of the B1 oops report;
+- GDB stopped your `insmod` in `__x64_sys_init_module` and `do_init_module`,
+  and you read the caller, the arguments and the return value for `num=7` and
+  `num=-1`;
+- GDB stopped at the entry of `my_timer_handler`, and you identified the task
+  it interrupted.
+
+## Further reading
 
 - [Kernel debugging with QEMU](https://bmeneg.com/post/kernel-debugging-with-qemu/)
 - [Provoking crashes with LKDTM](https://docs.kernel.org/fault-injection/provoke-crashes.html)

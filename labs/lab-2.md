@@ -5,25 +5,62 @@ course: Advanced Operating Systems
 institute: Politecnico di Milano
 ---
 
-# Syscall tracing
+# Overview
 
-## One workload, three observations
+## What you will build
 
-In Lab 1, GDB stopped the kernel. Here we record what happens while it runs.
+No module this time: three captures of the **same workload**, taken while the
+kernel keeps running.
 
 ```sh
 cat /init > /dev/null
 ```
 
-1. **Syscalls:** which requests does the process make, and what do they return?
-2. **Function graph:** which kernel functions execute inside one request?
-3. **Perf:** how do we save the events and interpret their aggregation?
+- **Part A — syscall events.** Record which system calls `cat` makes and what
+  they return, with tracepoints in a tracefs instance.
+- **Part B — function graph.** Record the kernel functions called inside one of
+  those system calls, `do_sendfile`.
+- **Part C — perf.** Record the same events into a file with `perf`, then list
+  and aggregate them.
 
-Commands run inside a fresh **amd64 QEMU guest**, unless marked otherwise. The captures use Linux and perf `5.16.0-rc1`, one virtual CPU, and a 584-byte `/init`. PIDs, addresses and timings vary.
+Each part ends with a **checkpoint**: compare your capture with the expected
+result and answer the questions before moving on. Reset the tracing state
+between parts: a forgotten setting changes the next capture.
+
+The three parts answer one question: how does BusyBox `cat` really copy a file,
+and how much of that can each tool show?
+
+## Set up the guest
+
+Lab 2 adds no module: `dev-build` is needed only if kernel and initramfs were
+never built.
+
+```sh
+# Host
+T=amd64 E=full make dev-up      # once
+T=amd64 E=full make dev-build   # only if never built
+T=amd64 E=full make dev-run
+```
+
+With the browser frontend, run the `AOS: Run QEMU (1 vCPU)` task. Then, in the
+guest:
+
+```sh
+# Guest
+[ -e /dev/null ] || mknod /dev/null c 1 3
+[ -d /sys/kernel/tracing/events ] || mount -t tracefs nodev /sys/kernel/tracing
+uname -r
+wc -c /init
+```
+
+Expected: `5.16.0-rc1` and `584 /init`. Keep the **same guest shell** for the
+whole lab; ignore console lines `... used greatest stack depth ...`. Exit QEMU
+with `Ctrl-]`, then `x`.
 
 ## Tracepoints, events and buffers
 
-A **tracepoint** is a predefined instrumentation site. Enabling a syscall tracing event records its fields in a per-CPU tracing buffer.
+A **tracepoint** is a predefined instrumentation site. Enabling a syscall
+tracing event records its fields in a per-CPU tracing buffer.
 
 ```tikz
 \begin{document}
@@ -39,23 +76,23 @@ A **tracepoint** is a predefined instrumentation site. Enabling a syscall tracin
 ```
 {.width=80% .center}
 
-**Tracefs** exposes configuration, filters and captured data as files under `/sys/kernel/tracing`.
-
-`current_tracer=nop` disables function tracing, **not enabled events**. `tracing_on` controls recording into the tracing buffer.
+**Tracefs** exposes configuration, filters and captured data as files under
+`/sys/kernel/tracing`. A directory under `instances/` is a separate tracing
+instance with its own buffer and event settings.
 
 %%[Edit in Excalidraw](Images/lab%202%202024-05-27%2014.16.07.excalidraw.md)%%
 
-## Prepare an isolated event capture
+# Part A — Syscall events
 
-**Start QEMU:** use `make dev-run` with the host-terminal frontend, or run the
-`AOS: Run QEMU (1 vCPU)` task in the browser. Both open the guest console used
-below.
+## A1 · Task: trace the file syscalls of `cat`
 
-**Guest:** prepare the output sink and a named tracing instance:
+Record entry and exit of `openat`, `read` and `sendfile64` for one run of the
+workload, and nothing else.
+
+- Work in a private instance `lab2`. Create it and start from a clean state:
 
 ```sh
-[ -e /dev/null ] || mknod /dev/null c 1 3
-[ -d /sys/kernel/tracing/events ] || mount -t tracefs nodev /sys/kernel/tracing
+# Guest
 mkdir -p /sys/kernel/tracing/instances/lab2
 T=/sys/kernel/tracing/instances/lab2
 export T
@@ -65,95 +102,85 @@ echo 0 > "$T/events/enable"
 echo > "$T/trace"
 ```
 
-This starts with recording stopped, no enabled events and an empty buffer. Keep the same guest shell for the following commands.
+- Enable the **six** events one by one. Enable both `read` and `sendfile64`: do
+  not assume how this `cat` copies the file.
+- Before the run, print the format of `sys_enter_sendfile64` and note its fields.
+- Record only the workload process, only while it runs; stop recording before
+  reading the buffer and its statistics for CPU 0.
 
-## Select the events
+## A1 · Useful tracefs files
 
-Record entry and exit for opening and transferring file data:
+Paths are relative to the instance `$T`:
+
+| File | Effect |
+|---|---|
+| `events/syscalls/<event>/enable` | `1` enables one event, `0` disables it |
+| `events/enable` | `0` disables every event of the instance |
+| `events/syscalls/<event>/format` | field names and print format of the event |
+| `set_event_pid` | record events only for the listed PIDs; empty write clears |
+| `tracing_on` | `1` starts, `0` stops recording into the buffer |
+| `trace` | read: buffer content; empty write: clear the buffer |
+| `per_cpu/cpu0/stats` | entries, overruns and dropped events on CPU 0 |
+
+## A1 · Record only the workload
+
+The PID of `cat` does not exist before `cat` starts, so it cannot be written in
+`set_event_pid` in advance. Use this launcher:
 
 ```sh
-echo 1 > "$T/events/syscalls/sys_enter_openat/enable"
-echo 1 > "$T/events/syscalls/sys_exit_openat/enable"
-echo 1 > "$T/events/syscalls/sys_enter_read/enable"
-echo 1 > "$T/events/syscalls/sys_exit_read/enable"
-echo 1 > "$T/events/syscalls/sys_enter_sendfile64/enable"
-echo 1 > "$T/events/syscalls/sys_exit_sendfile64/enable"
-cat "$T/events/syscalls/sys_enter_sendfile64/format"
-```
-
-The event format names the fields: `out_fd`, `in_fd`, `offset`, `count`.
-
-We include both `read` and `sendfile64` rather than assuming how this BusyBox build implements `cat`.
-
-## Capture only the workload process
-
-```sh
-wc -c /init
 sh -c '
   echo $$ > "$T/set_event_pid"
   echo 1 > "$T/tracing_on"
   exec cat /init
 ' > /dev/null
-echo 0 > "$T/tracing_on"
-cat "$T/trace"
-cat "$T/per_cpu/cpu0/stats"
 ```
 
-The child shell selects its own PID before enabling recording. `exec` replaces it with `cat` without changing that PID.
+- the child shell writes **its own** PID (`$$`) in the filter;
+- it starts recording;
+- `exec` replaces the shell with `cat` **with the same PID**, so only `cat` is
+  recorded;
+- the redirection to `/dev/null` is opened by the parent shell, before recording
+  starts.
 
-The output redirection is established before the child enables tracing. Stopping recording before reading `trace` separates acquisition from inspection.
+Set `tracing_on` back to `0` as soon as the launcher returns.
 
-## Read the syscall trace
+## A1 · Checkpoint
 
-::::div{.columns}
-:::div{.column width="50%"}
-**Observed sequence** — selected fields, hexadecimal values:
+Example from one run (selected fields; PID and timestamps vary):
 
 ```text
-sys_openat(...)
-sys_openat -> 0x3
-sys_sendfile64(out_fd: 1, in_fd: 3, ...)
-sys_sendfile64 -> 0x248
-sys_sendfile64(out_fd: 1, in_fd: 3, ...)
-sys_sendfile64 -> 0x0
+cat-81  [000] ...1.  18.756466: sys_openat(dfd: ffffff9c, filename: 7ffc168c6fa4, ...)
+cat-81  [000] ...1.  18.757142: sys_openat -> 0x3
+cat-81  [000] ...1.  18.757785: sys_sendfile64(out_fd: 1, in_fd: 3, offset: 0, count: 1000000)
+cat-81  [000] ...1.  18.758815: sys_sendfile64 -> 0x248
+cat-81  [000] ...1.  18.758835: sys_sendfile64(out_fd: 1, in_fd: 3, offset: 0, count: 1000000)
+cat-81  [000] ...1.  18.758847: sys_sendfile64 -> 0x0
 ```
 
-All six records belong to `cat`, PID 81 in this run. No `read` events were recorded.
+All records come from one PID; stats show `entries: 6`, `overrun: 0`,
+`dropped events: 0`. Then reset the instance:
+`echo 0 > "$T/events/enable"` and `echo > "$T/set_event_pid"`.
 
-[Full syscall capture](diagnostics/lab2-syscalls.log)
-:::
-:::div{.column width="50%"}
-- `openat` returns file descriptor **3**.
-- `sendfile` copies from descriptor **3** to **1** (stdout, redirected to `/dev/null`).
-- `0x248` = **584 bytes**, the file size.
-- The next call returns **0**: no more bytes to transfer.
+**Questions.**
 
-The trace contains the filename **pointer**, not the pathname string. We know the command; the pointer alone does not identify `/init`.
+1. Why is there no `read` event? What do descriptors 3 and 1 refer to?
+2. The first `sendfile64` asks for `0x1000000` bytes and returns `0x248`: why is
+   that not an error? Why does `cat` call it a second time, and what does that
+   call transfer?
+3. Why does `openat` show a number instead of the path `/init`?
 
-Buffer statistics: **6/6 entries, 0 overruns, 0 dropped events**.
-:::
-::::
+# Part B — Function graph
 
-## Finish the event capture
+## B1 · Task: the call tree of `do_sendfile`
 
-```sh
-echo 0 > "$T/events/enable"
-echo > "$T/set_event_pid"
-```
+Trace the kernel functions called by `do_sendfile` while the workload runs: only
+the workload process, at most **3 levels** deep.
 
-Recording was already stopped before inspecting the trace. Disable the selected events and remove the PID filter before the next experiment.
-
-The result changes our initial expectation: **this BusyBox `cat` transfers the file with `sendfile`, not a userspace read/write loop**.
-
-[Complete guest recipe](diagnostics/lab2-syscalls.sh)
-
-# Function graph tracing
-
-## Select the kernel path
-
-We observed two `sendfile` calls. Now inspect the kernel function **`do_sendfile`** while executing the same workload.
+- Use the **top-level** instance: on this kernel `instances/lab2` has no
+  `set_graph_function` and no `max_graph_depth`. Leave it clean first:
 
 ```sh
+# Guest
 T=/sys/kernel/tracing
 export T
 echo 0 > "$T/tracing_on"
@@ -161,86 +188,58 @@ echo 0 > "$T/events/enable"
 echo > "$T/set_event_pid"
 echo nop > "$T/current_tracer"
 echo > "$T/set_ftrace_filter"
-echo do_sendfile > "$T/set_graph_function"
-echo 3 > "$T/max_graph_depth"
-echo function_graph > "$T/current_tracer"
-echo > "$T/trace"
 ```
 
-Use the **top-level tracefs instance**: the named instance lacks these graph controls on our kernel. The root-function filter limits the traced call tree; depth 3 limits its expansion.
+- Then: choose the root function, limit the depth, select the tracer, clear the
+  buffer, run the workload with the A1 launcher adapted to **function** tracing,
+  stop recording, read the trace and the CPU 0 statistics.
 
-## Capture and reset the function graph
+## B1 · Useful tracefs files
 
-::::div{.columns}
-:::div{.column width="50%"}
-**Run and inspect**
+| File | Effect |
+|---|---|
+| `current_tracer` | `function_graph` records call trees; `nop` disables function tracing |
+| `set_graph_function` | root functions of the graph; empty write clears |
+| `max_graph_depth` | maximum nesting depth shown; `0` means no limit |
+| `set_ftrace_filter` | restricts traced functions; empty write clears |
+| `set_ftrace_pid` | PIDs for **function** tracing (`set_event_pid` is for events) |
+| `tracing_on`, `trace`, `per_cpu/cpu0/stats` | as in Part A |
 
-```sh
-sh -c '
-  echo $$ > "$T/set_ftrace_pid"
-  echo 1 > "$T/tracing_on"
-  exec cat /init
-' > /dev/null
-echo 0 > "$T/tracing_on"
-cat "$T/trace"
-cat "$T/per_cpu/cpu0/stats"
-```
+Reading the output: one line per call, indentation is nesting. `f() {` opens a
+call with children, `}` closes it with its duration; `f();` is a leaf. The
+duration column marks `+` above 10 µs, `!` above 100 µs, `#` above 1 ms.
 
-`set_ftrace_pid` filters function tracing; it is distinct from the event filter `set_event_pid`.
-:::
-:::div{.column width="50%"}
-**Then reset**
+## B1 · Checkpoint
 
-```sh
-echo nop > "$T/current_tracer"
-echo > "$T/set_ftrace_pid"
-echo > "$T/set_graph_function"
-echo 0 > "$T/max_graph_depth"
-```
-
-This removes the tracer, PID filter, root-function filter and depth limit used by this experiment.
-
-[Complete guest recipe](diagnostics/lab2-function-graph.sh)
-:::
-::::
-
-## Read the call tree
-
-Selected lines from the first `do_sendfile` call; `...` marks omitted lines:
+Start of the first root, from one run (durations vary):
 
 ```text
  0)               |  do_sendfile() {
  0)               |    __fdget() {
  0) + 48.168 us   |      __fget_light();
- ...
- 0)               |    rw_verify_area() {
- 0)   8.077 us    |      security_file_permission();
- ...
- 0)               |    do_splice_direct() {
- 0)   4.962 us    |      rw_verify_area();
- 0) ! 415.313 us  |      splice_direct_to_actor();
- 0) ! 460.867 us  |    }
- 0) # 1475.535 us |  }
+ 0)   7.807 us    |      irq_enter_rcu();
+ 0) ! 167.037 us  |      __sysvec_apic_timer_interrupt();
+ 0) + 19.868 us   |      irq_exit_rcu();
+ 0) ! 595.580 us  |    }
 ```
 
-Indentation represents nested calls. The graph exposes descriptor lookup, access checks and the kernel's splice path; it does not print syscall argument values.
+Expected: **two** `do_sendfile` roots, at most three levels, `overrun: 0`. The
+timer-interrupt lines may be absent in your run.
 
-## Calls, interrupts and durations
+**Questions.**
 
-- The capture has **two `do_sendfile` roots**, consistent with the two syscall invocations observed in the separate event capture.
-- A second call still executes kernel code even when it ultimately transfers zero bytes.
-- The full graph also contains a timer interrupt nested during execution. The PID filter does not make interrupt activity disappear.
-- Durations are from **instrumented QEMU execution**, not native-machine performance measurements. Nested durations must not simply be added together.
+1. Why two roots? Which steps does the second run, though it transfers nothing?
+2. Does `__fdget` call `__sysvec_apic_timer_interrupt`? Why did the PID filter
+   not remove those lines?
+3. Is a parent's duration the sum of its children's? Are these real-machine times?
 
-The depth limit hides deeper calls. The captured buffer reported **58 entries, 0 overruns and 0 dropped events**.
-
-[Full function graph capture](diagnostics/lab2-function-graph.log)
-
-# Recording and analysing events with perf
+# Part C — Recording with perf
 
 ## Record now, inspect afterwards
 
-Tracefs let us read its tracing buffer directly. **Perf records selected events into `perf.data` through the perf event interface**, using its own recording buffers.
+Tracefs let you read its buffer directly.
+**Perf records selected events into a file**, `perf.data`, through the perf
+event interface and its own buffers; you inspect the file afterwards.
 
 ```tikz
 \begin{document}
@@ -258,38 +257,58 @@ Tracefs let us read its tracing buffer directly. **Perf records selected events 
 ```
 {.width=80% .center}
 
-The image already provides `perf`; the verified version is `5.16.0-rc1`. These syscall events do not require hardware performance counters or a BPF program.
+The guest already provides `perf` `5.16.0-rc1`. Syscall events need neither
+hardware performance counters nor a BPF program.
 
 %%[Edit in Excalidraw](Images/lab%202%202024-06-07%2015.55.55.excalidraw.md)%%
 
-## Record the same workload
+## C1 · Task: record, list, aggregate
 
-**Guest**, after resetting the previous capture:
+First reset Part B (the top-level instance, `T=/sys/kernel/tracing`), then
+prepare the shell:
 
 ```sh
+# Guest
+echo nop > "$T/current_tracer"
+echo > "$T/set_ftrace_pid"
+echo > "$T/set_graph_function"
+echo 0 > "$T/max_graph_depth"
 mkdir -p /tmp
 export PERF_PAGER=cat
 perf --version
-perf record -o /tmp/lab2-perf.data -c 1 \
-  -e syscalls:sys_enter_openat -e syscalls:sys_exit_openat \
-  -e syscalls:sys_enter_sendfile64 -e syscalls:sys_exit_sendfile64 \
-  -- cat /init > /dev/null
 ```
 
-- `-e` selects the events; `-c 1` requests a sample for every occurrence.
-- Without `-a`, this command records the launched workload, not all tasks system-wide.
-- We record **events**, not periodic CPU samples. No `cycles` event is requested.
+1. Record into `/tmp/lab2-perf.data` entry and exit of the syscalls that
+   **did fire** in Part A, one sample per occurrence, only for the launched
+   workload (not system-wide).
+2. Write the individual records to `/tmp/lab2-perf-script.txt` and print it.
+3. Write an aggregation by command name, with sample counts and no percentage
+   cut-off, to `/tmp/lab2-perf-report.txt` and print it.
 
-Observed: `Captured and wrote 0.002 MB /tmp/lab2-perf.data (6 samples)`.
+Write to files and `cat` them: this avoids paging and truncation to the
+terminal width.
 
-## Inspect individual records
+## C1 · Useful perf options
 
-```sh
-perf script -i /tmp/lab2-perf.data > /tmp/lab2-perf-script.txt
-cat /tmp/lab2-perf-script.txt
-```
+| Command / option | Effect |
+|---|---|
+| `perf list '<glob>'` | list matching events, e.g. `'syscalls:*sendfile*'` |
+| `perf record ... -- <command>` | run `<command>` and record its events |
+| `-e <event>` | select one event (repeatable); names as `syscalls:sys_enter_openat` |
+| `-c 1` | one sample every occurrence of the event |
+| `-a` | all CPUs and tasks, system-wide: **do not use here** |
+| `-o <file>` / `-i <file>` | output file of `record` / input file of `script`, `report` |
+| `perf script` | print every recorded sample |
+| `perf report --stdio` | text aggregation instead of the interactive browser |
+| `--sort comm` | group samples by command name |
+| `--show-nr-samples` | add a column with the number of samples |
+| `--percent-limit 0` | do not hide entries with a small percentage |
 
-Selected event names and results from the capture, all belonging to `cat` PID 92:
+## C1 · Checkpoint
+
+Expected: `perf record` ends with
+`Captured and wrote 0.002 MB /tmp/lab2-perf.data (6 samples)`. The script lists,
+for one `cat` PID, the same sequence as Part A:
 
 ```text
 syscalls:sys_enter_openat
@@ -300,51 +319,34 @@ syscalls:sys_enter_sendfile64
 syscalls:sys_exit_sendfile64   0x0
 ```
 
-The sequence agrees with the earlier tracefs capture. These are separate runs: their PIDs, addresses and timestamps differ.
+The report has one block per event, with **1, 1, 2, 2** samples, each
+`100.00%  cat`, and `Total Lost Samples: 0`.
 
-Redirecting output to a file avoids interactive paging and terminal-width truncation during capture.
+**Questions.**
 
-## Interpret the aggregation
+1. `100.00%` of what? Is it CPU time?
+2. Six samples: how many system calls did `cat` make?
+3. Where did the records live in Part A, and where in Part C? What can you do
+   with `perf.data` that you cannot do with the tracefs buffer?
+
+# Wrap-up
+
+## Done when
+
+- Part A: the `lab2` trace has six records of one PID: `openat` returning 3,
+  then two `sendfile64` returning `0x248` and `0x0`; no overruns, no dropped
+  events.
+- Part B: the graph has two `do_sendfile` roots, at most three levels deep.
+- Part C: `perf script` shows the same six events; `perf report` shows 1, 1, 2, 2
+  samples and no lost samples.
+- The tracing state is reset:
 
 ```sh
-perf report -i /tmp/lab2-perf.data --stdio --sort comm \
-  --show-nr-samples --percent-limit 0 > /tmp/lab2-perf-report.txt
-cat /tmp/lab2-perf-report.txt
+cat /sys/kernel/tracing/current_tracer       # nop
+cat /sys/kernel/tracing/set_graph_function   # #### all functions enabled ####
 ```
 
-::::div{.columns}
-:::div{.column width="50%"}
-Selected lines from the report:
-
-```text
-# Samples: 2 of event
-# 'syscalls:sys_exit_sendfile64'
-# Event count (approx.): 2
-# Overhead  Samples  Command
-  100.00%         2  cat
-```
-
-Event-name line wrapped for readability.
-:::
-:::div{.column width="50%"}
-The four event groups contain **1, 1, 2 and 2 samples** respectively. Total lost samples: **0**.
-
-`100%` means that `cat` accounts for all samples **of this selected event**. It is not a CPU-time percentage.
-
-An entry and its exit are separate records: six samples here represent three syscall invocations, not six invocations.
-:::
-::::
-
-## Reproduce and compare
-
-All commands were exercised in the same amd64 QEMU environment. Full guest recipes and captured output are stored beside this handout:
-
-- [Syscall commands](diagnostics/lab2-syscalls.sh) and [trace](diagnostics/lab2-syscalls.log).
-- [Function graph commands](diagnostics/lab2-function-graph.sh) and [trace](diagnostics/lab2-function-graph.log).
-- [Perf commands](diagnostics/lab2-perf.sh) and [output](diagnostics/lab2-perf.log).
-
-The scripts contain **guest commands**. They are not automatically installed in the initramfs; enter the commands in the QEMU shell, or copy the scripts into a prepared guest.
-
-The three views answer different questions: **requests and results**, **nested kernel calls**, **recorded events and their aggregation**.
+- You can answer every checkpoint question: what each tool showed, and what it
+  could not show.
 
 [Linux event tracing](https://docs.kernel.org/trace/events.html) · [Function tracing](https://docs.kernel.org/trace/ftrace.html) · [Perf examples](https://brendangregg.com/perf.html)
