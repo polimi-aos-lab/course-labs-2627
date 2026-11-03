@@ -39,9 +39,9 @@ build-container:
 #   make dev-down                                  # tear down
 
 
-# Normalize F: accept either repo-relative or absolute host path,
-# strip the host repo prefix, prepend /repo/ for the container view.
-F_REL = $(patsubst $(CURDIR)/%,%,$(abspath $(F)))
+# F may be repo-relative or an absolute host path. The prefix is stripped in
+# the shell (see dev-vi) because make's patsubst/abspath break on paths that
+# contain spaces.
 
 dev-up:
 	docker run -d --name $(LKP) --privileged $(CONTAINER_RUN_FLAGS) \
@@ -57,7 +57,8 @@ dev-sh:
 
 dev-vi:
 	@test -n "$(F)" || { echo "usage: make dev-vi F=<path>"; exit 2; }
-	docker exec -it -e TERM=$$TERM $(LKP) nvim /repo/$(F_REL)
+	@f='$(F)'; f="$${f#'$(CURDIR)'/}"; \
+	docker exec -it -e TERM=$$TERM $(LKP) nvim "/repo/$$f"
 
 dev-build:
 	docker exec -e __BUILD_ARCH=$(T) -e BUILD_JOBS=$(JOBS) $(LKP) /bin/bash -c "cd /repo/modules && make build-modules"
