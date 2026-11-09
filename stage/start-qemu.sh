@@ -8,6 +8,7 @@ show_help() {
     echo "  --with-gui               Open QEMU gui"
     echo "  --dbg                    Start paused with the GDB server on port 1234"
     echo "  --gdb-host <address>     Bind the GDB server to this address"
+    echo "  --uart2 <port>           amd64: attach COM2 (0x2F8, IRQ 3) to TCP 127.0.0.1:<port>"
     echo "  --dry                    Dry run"
     echo "  --help                   Display this help and exit"
 }
@@ -19,6 +20,7 @@ BUILD_ARCH=""
 DRY=0
 SMP=1
 GDB_HOST=""
+UART2=""
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
 
@@ -31,6 +33,7 @@ while [ $# -gt 0 ]; do
     --with-gui)  GRAPHIC_MODE=1; shift ;;
     --dbg)       DEBUG_MODE=1;   shift ;;
     --gdb-host)  GDB_HOST="$2";  shift 2 ;;
+    --uart2)     UART2="$2";     shift 2 ;;
     --dry)       DRY=1;          shift ;;
     --help)      show_help; exit 0 ;;
     *)           shift ;;
@@ -73,6 +76,20 @@ if [ "$DEBUG_MODE" == "1" ]; then
     else
         QEMUMAC+=" -s -S"
     fi
+fi
+
+# Optional COM2 (I/O 0x2F8, IRQ 3) for the Lab 5 UART driver. The guest kernel
+# registers only ttyS0, so COM2 stays free for a module. QEMU listens on
+# 127.0.0.1:<port> and boots without waiting; connect a client such as nc.
+if [ -n "$UART2" ]; then
+    if [ "$BUILD_ARCH" != "amd64" ]; then
+        echo "Error: --uart2 is supported only with --arch amd64." >&2
+        exit 1
+    fi
+    # -serial options fill COM1, COM2, ... in order; in GUI mode COM1 is the
+    # default virtual console and must be listed explicitly.
+    [ -n "$GRAPHIC_MODE" ] && QEMUMAC+=" -serial vc"
+    QEMUMAC+=" -serial tcp:127.0.0.1:$UART2,server,nowait"
 fi
 
 CMD="$QEMUCMD $QEMUMAC -kernel $DIR/bzImage-$BUILD_ARCH -initrd $DIR/initramfs-busybox-$BUILD_ARCH.cpio.gz -append \"$QEMUAPP\""

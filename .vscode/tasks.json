@@ -81,6 +81,44 @@
       }
     },
     {
+      "label": "AOS: Run QEMU with COM2 on port 6000 (1 vCPU)",
+      "type": "shell",
+      "command": "/repo/scripts/dev-container.sh",
+      "args": ["run"],
+      "options": {
+        "cwd": "/repo",
+        "env": {
+          "__BUILD_ARCH": "amd64",
+          "SMP": "1",
+          "UART2": "6000"
+        }
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "focus": true,
+        "panel": "dedicated"
+      }
+    },
+    {
+      "label": "AOS: Connect to COM2 (port 6000)",
+      "type": "shell",
+      "command": "/repo/scripts/dev-container.sh",
+      "args": ["uart2"],
+      "options": {
+        "cwd": "/repo",
+        "env": {
+          "UART2": "6000"
+        }
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "focus": true,
+        "panel": "dedicated"
+      }
+    },
+    {
       "label": "AOS: Debug QEMU (1 vCPU)",
       "type": "shell",
       "command": "/repo/scripts/dev-container.sh",

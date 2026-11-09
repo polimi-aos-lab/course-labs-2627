@@ -49,6 +49,14 @@ make SMP=1 macos-qemu-run
 That terminal is the guest console. Quit QEMU with <kbd>Ctrl-]</kbd>, then
 <kbd>x</kbd>.
 
+For Lab 5, add COM2 on TCP port 6000 and attach to it from a second macOS
+terminal:
+
+```sh
+make SMP=1 UART2=6000 macos-qemu-run
+nc 127.0.0.1 6000
+```
+
 ## Debug from the browser
 
 Start host QEMU paused:

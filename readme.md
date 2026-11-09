@@ -172,6 +172,18 @@ A successful boot prints `Welcome to aos-mini-linux` and opens a BusyBox
 shell. `uname -r` should report `5.16.0-rc1`. Exit QEMU with
 <kbd>Ctrl-]</kbd>, then <kbd>x</kbd>.
 
+Lab 5 drives the second serial port (COM2, I/O `0x2F8`, IRQ 3). Start QEMU
+with COM2 on TCP port 6000 and, in a second host terminal, attach to it:
+
+```sh
+T=amd64 E=full make UART2=6000 dev-run
+T=amd64 E=full make UART2=6000 dev-uart2
+```
+
+In the browser environment use the tasks **AOS: Run QEMU with COM2 on port
+6000 (1 vCPU)** and **AOS: Connect to COM2 (port 6000)**. Close the COM2
+terminal with <kbd>Ctrl-C</kbd>.
+
 ## Clean up
 
 ```sh

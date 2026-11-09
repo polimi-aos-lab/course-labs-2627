@@ -2,6 +2,7 @@ T?=amd64
 E?=full
 JOBS?=4
 SMP?=1
+UART2?=
 CONTAINER_BUILD_FLAGS?=
 CONTAINER_RUN_FLAGS?=
 VSCODE_TAG?=lkp-amd64-full-vscode
@@ -34,6 +35,8 @@ build-container:
 #   make dev-build                                 # rebuild modules + initramfs
 #   make dev-ccdb                                  # gen compile_commands.json
 #   make SMP=4 dev-run                             # qemu with four virtual CPUs
+#   make UART2=6000 dev-run                        # qemu with COM2 on TCP port 6000
+#   make UART2=6000 dev-uart2                      # terminal attached to COM2
 #   make dev-dbg                                   # qemu paused, gdb on :1234
 #   make dev-sh                                    # bash inside
 #   make dev-down                                  # tear down
@@ -74,8 +77,14 @@ dev-ccdb:
 	@echo "compile_commands.json written under /sources/linux and each /repo/modules/lab-*"
 	@echo "(per-module dbs have directory=/sources/linux so -I./ resolves correctly)"
 
+UART2_FLAG = $(if $(UART2),--uart2 $(UART2))
+
 dev-run:
-	docker exec -it -e TERM=$$TERM $(LKP) /repo/stage/start-qemu.sh --arch $(T) --smp $(SMP)
+	docker exec -it -e TERM=$$TERM $(LKP) /repo/stage/start-qemu.sh --arch $(T) --smp $(SMP) $(UART2_FLAG)
+
+dev-uart2:
+	@test -n "$(UART2)" || { echo "usage: make UART2=<port> dev-uart2"; exit 2; }
+	docker exec -it $(LKP) /staging/initramfs/fs/bin/busybox nc 127.0.0.1 $(UART2)
 
 dev-dbg:
 	docker exec -it -e TERM=$$TERM $(LKP) /repo/stage/start-qemu.sh --arch $(T) --smp $(SMP) --dbg
@@ -98,7 +107,7 @@ macos-qemu-check:
 	}
 
 macos-qemu-run: macos-qemu-check
-	./stage/start-qemu.sh --arch amd64 --smp $(SMP)
+	./stage/start-qemu.sh --arch amd64 --smp $(SMP) $(UART2_FLAG)
 
 macos-qemu-debug: macos-qemu-check
 	./stage/start-qemu.sh --arch amd64 --smp $(SMP) --dbg \
